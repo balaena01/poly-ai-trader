@@ -404,10 +404,9 @@ class Orchestrator:
         if market_id in self.executed_markets:
             return
         
-        # 既にトリガー待機中ならスキップ
+        # 既存トリガーをチェック (後で比較用)
         token_id = getattr(market, 'yes_token_id', None)
-        if token_id and token_id in self.active_triggers:
-            return
+        existing_trigger = self.active_triggers.get(token_id) if token_id else None
         
         question = getattr(market, 'question', str(market))
         print(f"\n🧠 分析: {question[:50]}...")
@@ -501,6 +500,18 @@ class Orchestrator:
         
         market_id = getattr(market, 'condition_id', str(id(market)))
         question = getattr(market, 'question', str(market))
+        
+        # 既存トリガーをチェック
+        existing_trigger = self.active_triggers.get(token_id)
+        if existing_trigger:
+            # 同じ方向なら維持
+            if existing_trigger.side == signal.action.value:
+                return  # 変更なし
+            
+            # 反対方向 → 古いトリガーを削除
+            print(f"   🔄 予測反転: {existing_trigger.side} → {signal.action.value}")
+            self.risk_manager.remove_pending_exposure(existing_trigger.size)
+            del self.active_triggers[token_id]
         
         # 目標価格 (現在価格から少し有利な位置)
         current_price = getattr(market, 'yes_price', 0.5)
