@@ -105,58 +105,21 @@ async def cmd_trade(args):
 
 
 async def cmd_run(args):
-    """自動売買ループ"""
-    print("🚀 自動売買モード開始")
-    print(f"   間隔: {args.interval}分")
-    print(f"   ドライラン: {args.dry_run}")
-    print(f"   最大取引/回: {args.max_trades}")
-    print("\nCtrl+C で停止\n")
+    """フル統合自動売買"""
+    from runner import Orchestrator
+    from runner.orchestrator import OrchestratorConfig, RunMode
     
-    scanner = MarketScanner()
-    analyst = LLMAnalyst()
-    executor = TradeExecutor(dry_run=args.dry_run)
+    config = OrchestratorConfig(
+        mode=RunMode.LIVE if args.live else RunMode.DRY_RUN,
+        llm_model=args.model,
+        min_edge=args.min_edge,
+        max_markets=args.limit,
+        max_trades_per_cycle=args.max_trades,
+        fetch_news=not args.no_news,
+    )
     
-    while True:
-        try:
-            print(f"\n{'='*60}")
-            print(f"⏰ {asyncio.get_event_loop().time():.0f}")
-            
-            # スキャン
-            scan_result = await scanner.scan()
-            
-            # 分析
-            print("🧠 分析中...")
-            signals = await analyst.generate_signals(
-                markets=scan_result.markets[:args.limit],
-                btc_price=scan_result.btc_price.price if scan_result.btc_price else None,
-                btc_change=scan_result.btc_price.change_24h if scan_result.btc_price else None,
-                min_edge=args.min_edge,
-            )
-            
-            # 取引
-            tradeable = [s for s in signals if s.is_tradeable]
-            
-            if tradeable:
-                print(f"🎯 シグナル: {len(tradeable)}件")
-                results = await executor.execute_signals(tradeable, max_trades=args.max_trades)
-            else:
-                print("⚪ 取引シグナルなし")
-            
-            # 統計
-            stats = executor.get_stats()
-            print(f"📈 累計: {stats}")
-            
-            # 待機
-            print(f"\n⏳ 次回: {args.interval}分後...")
-            await asyncio.sleep(args.interval * 60)
-            
-        except KeyboardInterrupt:
-            print("\n\n👋 停止しました")
-            print(f"📊 最終統計: {executor.get_stats()}")
-            break
-        except Exception as e:
-            print(f"❌ エラー: {e}")
-            await asyncio.sleep(60)
+    orchestrator = Orchestrator(config)
+    await orchestrator.start()
 
 
 async def cmd_markets(args):
@@ -216,12 +179,13 @@ def main():
     p_trade.add_argument("--dry-run", action="store_true", default=True, help="ドライラン")
     p_trade.add_argument("--live", action="store_true", help="本番実行")
     
-    # run (自動売買ループ)
-    p_run = subparsers.add_parser("run", help="自動売買ループ")
-    p_run.add_argument("-i", "--interval", type=int, default=60, help="間隔 (分)")
-    p_run.add_argument("-n", "--limit", type=int, default=10, help="分析数")
+    # run (フル統合自動売買)
+    p_run = subparsers.add_parser("run", help="フル統合自動売買 (WebSocket + LLM + Risk)")
+    p_run.add_argument("-n", "--limit", type=int, default=10, help="最大マーケット数")
+    p_run.add_argument("-m", "--model", default="claude-haiku-4.5", help="LLMモデル")
     p_run.add_argument("--min-edge", type=float, default=0.10, help="最小エッジ")
-    p_run.add_argument("--max-trades", type=int, default=3, help="最大取引数/回")
+    p_run.add_argument("--max-trades", type=int, default=3, help="最大取引数/サイクル")
+    p_run.add_argument("--no-news", action="store_true", help="ニュース取得を無効化")
     p_run.add_argument("--dry-run", action="store_true", default=True, help="ドライラン")
     p_run.add_argument("--live", action="store_true", help="本番実行")
     
