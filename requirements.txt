@@ -6,6 +6,9 @@ py-clob-client>=0.1.0
 # HTTP Client
 httpx>=0.25.0
 
+# WebSocket (Binance streaming)
+websockets>=11.0
+
 # Data Processing
 pandas>=2.0.0
 
