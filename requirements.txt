@@ -9,6 +9,9 @@ httpx>=0.25.0
 # WebSocket (Binance streaming)
 websockets>=11.0
 
+# LLM (LiteLLM - 複数プロバイダー対応)
+litellm>=1.0.0
+
 # Data Processing
 pandas>=2.0.0
 

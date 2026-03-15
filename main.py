@@ -39,10 +39,7 @@ async def cmd_analyze(args):
     scan_result = await scanner.scan()
     
     print(f"\n🧠 LLM 分析中...")
-    analyst = LLMAnalyst(
-        provider=args.provider,
-        model=args.model,
-    )
+    analyst = LLMAnalyst(model=args.model)
     
     signals = await analyst.generate_signals(
         markets=scan_result.markets[:args.limit],
@@ -208,8 +205,7 @@ def main():
     p_analyze = subparsers.add_parser("analyze", help="LLM分析")
     p_analyze.add_argument("-n", "--limit", type=int, default=5, help="分析数")
     p_analyze.add_argument("--min-edge", type=float, default=0.10, help="最小エッジ")
-    p_analyze.add_argument("--provider", default="openrouter", help="LLMプロバイダー")
-    p_analyze.add_argument("--model", default="anthropic/claude-3-haiku", help="モデル")
+    p_analyze.add_argument("-m", "--model", default="claude-haiku", help="モデル (claude-haiku, claude-sonnet, gpt-4o-mini, etc.)")
     
     # trade
     p_trade = subparsers.add_parser("trade", help="取引実行")
@@ -234,6 +230,9 @@ def main():
     p_markets.add_argument("-q", "--query", help="検索キーワード")
     p_markets.add_argument("-n", "--limit", type=int, default=10, help="件数")
     
+    # models
+    subparsers.add_parser("models", help="利用可能なLLMモデル一覧")
+    
     args = parser.parse_args()
     
     # --live で dry_run を無効化
@@ -250,6 +249,9 @@ def main():
         asyncio.run(cmd_run(args))
     elif args.command == "markets":
         asyncio.run(cmd_markets(args))
+    elif args.command == "models":
+        from analyst.llm_analyst import list_models
+        list_models()
     else:
         parser.print_help()
 

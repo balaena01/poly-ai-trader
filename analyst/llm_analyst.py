@@ -1,20 +1,29 @@
 """
 LLM Analyst
 - マーケット情報 + 外部価格を分析
-- LLM (Claude/OpenAI) で確率予測
+- LiteLLM で複数プロバイダー対応 (Anthropic, OpenAI, etc.)
 - 売買シグナル生成
 """
 import os
 import json
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
 from enum import Enum
 
-import httpx
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# LiteLLM
+try:
+    import litellm
+    from litellm import acompletion
+    LITELLM_AVAILABLE = True
+except ImportError:
+    LITELLM_AVAILABLE = False
+    print("Warning: litellm not installed. Run: pip install litellm")
 
 
 class Action(Enum):
@@ -60,8 +69,28 @@ class Signal:
         }
 
 
+# 利用可能なモデル
+MODELS = {
+    # Anthropic (直接)
+    "claude-haiku": "claude-3-haiku-20240307",
+    "claude-sonnet": "claude-sonnet-4-20250514",
+    "claude-opus": "claude-opus-4-20250514",
+    
+    # OpenAI (直接)
+    "gpt-4o": "gpt-4o",
+    "gpt-4o-mini": "gpt-4o-mini",
+    
+    # OpenRouter 経由
+    "or-haiku": "openrouter/anthropic/claude-3-haiku",
+    "or-sonnet": "openrouter/anthropic/claude-3.5-sonnet",
+    
+    # Groq
+    "llama-70b": "groq/llama-3.1-70b-versatile",
+}
+
+
 class LLMAnalyst:
-    """LLM を使った市場分析"""
+    """LLM を使った市場分析 (LiteLLM 対応)"""
     
     SYSTEM_PROMPT = """あなたは予測市場のアナリストです。
 与えられた情報から、イベントが「YES」で解決する確率を予測してください。
@@ -82,28 +111,33 @@ class LLMAnalyst:
     
     def __init__(
         self,
-        provider: str = "openrouter",  # "openrouter" or "openai"
-        model: str = "anthropic/claude-3-haiku",
+        model: str = "claude-haiku",
+        fallback_model: str = None,
     ):
         """
         LLM Analyst 初期化
         
         Args:
-            provider: LLM プロバイダー
-            model: モデル名
+            model: モデル名 (MODELS のキーまたは完全名)
+            fallback_model: フォールバックモデル
+        
+        環境変数:
+            ANTHROPIC_API_KEY: Anthropic 直接
+            OPENAI_API_KEY: OpenAI 直接
+            OPENROUTER_API_KEY: OpenRouter 経由
+            GROQ_API_KEY: Groq
         """
-        self.provider = provider
-        self.model = model
+        if not LITELLM_AVAILABLE:
+            raise RuntimeError("litellm not installed")
         
-        if provider == "openrouter":
-            self.api_key = os.getenv("OPENROUTER_API_KEY")
-            self.base_url = "https://openrouter.ai/api/v1"
-        else:
-            self.api_key = os.getenv("OPENAI_API_KEY")
-            self.base_url = "https://api.openai.com/v1"
+        # モデル名を解決
+        self.model = MODELS.get(model, model)
+        self.fallback_model = MODELS.get(fallback_model, fallback_model) if fallback_model else None
         
-        if not self.api_key:
-            print(f"⚠️ {provider.upper()}_API_KEY が設定されていません")
+        # デバッグ出力を抑制
+        litellm.suppress_debug_info = True
+        
+        print(f"🤖 LLM: {self.model}")
     
     async def analyze_market(
         self,
@@ -148,38 +182,49 @@ JSON形式で回答してください。
 """
         
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": self.model,
-                        "messages": [
+            response = await acompletion(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": self.SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.3,
+                max_tokens=500,
+            )
+            
+            content = response.choices[0].message.content
+            
+            # JSON抽出
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0]
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0]
+            
+            return json.loads(content.strip())
+            
+        except Exception as e:
+            print(f"LLM分析エラー: {e}")
+            
+            # フォールバック
+            if self.fallback_model:
+                try:
+                    print(f"  → フォールバック: {self.fallback_model}")
+                    response = await acompletion(
+                        model=self.fallback_model,
+                        messages=[
                             {"role": "system", "content": self.SYSTEM_PROMPT},
                             {"role": "user", "content": user_prompt},
                         ],
-                        "temperature": 0.3,
-                        "max_tokens": 500,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                
-                content = data["choices"][0]["message"]["content"]
-                
-                # JSON抽出
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0]
-                elif "```" in content:
-                    content = content.split("```")[1].split("```")[0]
-                
-                return json.loads(content.strip())
-                
-        except Exception as e:
-            print(f"LLM分析エラー: {e}")
+                        temperature=0.3,
+                        max_tokens=500,
+                    )
+                    content = response.choices[0].message.content
+                    if "```json" in content:
+                        content = content.split("```json")[1].split("```")[0]
+                    return json.loads(content.strip())
+                except Exception as e2:
+                    print(f"フォールバックも失敗: {e2}")
+            
             return None
     
     async def generate_signals(
@@ -194,18 +239,6 @@ JSON形式で回答してください。
     ) -> List[Signal]:
         """
         複数マーケットからシグナルを生成
-        
-        Args:
-            markets: MarketData リスト
-            btc_price: BTC価格
-            btc_change: BTC 24h変化率
-            eth_price: ETH価格
-            eth_change: ETH 24h変化率
-            min_edge: 最小エッジ
-            max_markets: 最大分析数
-        
-        Returns:
-            Signal リスト
         """
         signals = []
         
@@ -265,13 +298,24 @@ JSON形式で回答してください。
             signals.append(signal)
             
             # レート制限対策
-            import asyncio
             await asyncio.sleep(0.5)
         
         # エッジの絶対値でソート
         signals.sort(key=lambda x: abs(x.edge), reverse=True)
         
         return signals
+
+
+def list_models():
+    """利用可能なモデル一覧"""
+    print("\n🤖 利用可能なモデル:\n")
+    for key, model in MODELS.items():
+        print(f"  {key:15} → {model}")
+    print("\n環境変数:")
+    print("  ANTHROPIC_API_KEY   : Anthropic 直接")
+    print("  OPENAI_API_KEY      : OpenAI 直接")
+    print("  OPENROUTER_API_KEY  : OpenRouter 経由")
+    print("  GROQ_API_KEY        : Groq")
 
 
 # テスト用
@@ -283,14 +327,12 @@ async def _test():
     result = await scanner.scan()
     
     # 分析
-    analyst = LLMAnalyst()
+    analyst = LLMAnalyst(model="claude-haiku")
     
     signals = await analyst.generate_signals(
-        markets=result.markets[:3],
+        markets=result.markets[:2],
         btc_price=result.btc_price.price if result.btc_price else None,
         btc_change=result.btc_price.change_24h if result.btc_price else None,
-        eth_price=result.eth_price.price if result.eth_price else None,
-        eth_change=result.eth_price.change_24h if result.eth_price else None,
     )
     
     print(f"\n🎯 シグナル ({len(signals)}件):")
@@ -299,5 +341,8 @@ async def _test():
 
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(_test())
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "models":
+        list_models()
+    else:
+        asyncio.run(_test())
