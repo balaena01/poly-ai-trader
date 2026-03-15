@@ -3,6 +3,7 @@ Trade Executor
 - シグナルに基づいて注文を実行
 - リトライ機能
 - ドライランモード
+- リスク管理統合
 """
 import os
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from dotenv import load_dotenv
 
 from client import PolyClient
 from analyst.llm_analyst import Signal, Action
+from risk import RiskManager, Auditor
 
 load_dotenv()
 
@@ -52,6 +54,9 @@ class TradeExecutor:
         dry_run: bool = True,
         max_retries: int = 3,
         default_amount: float = 10.0,  # USDC
+        initial_balance: float = 1000,
+        use_risk_manager: bool = True,
+        use_auditor: bool = True,
     ):
         """
         Trade Executor 初期化
@@ -60,6 +65,9 @@ class TradeExecutor:
             dry_run: True = 実際の注文を出さない
             max_retries: 最大リトライ回数
             default_amount: デフォルト注文金額
+            initial_balance: 初期残高
+            use_risk_manager: リスク管理を使用
+            use_auditor: 監査を使用
         """
         self.dry_run = dry_run
         self.max_retries = max_retries
@@ -67,6 +75,14 @@ class TradeExecutor:
         
         self._client = None
         self._connected = False
+        
+        # リスク管理
+        self.use_risk_manager = use_risk_manager
+        self.risk_manager = RiskManager(initial_balance=initial_balance) if use_risk_manager else None
+        
+        # 監査
+        self.use_auditor = use_auditor
+        self.auditor = Auditor() if use_auditor else None
         
         # 実行履歴
         self.history: List[ExecutionResult] = []
@@ -135,6 +151,9 @@ class TradeExecutor:
         self,
         signal: Signal,
         amount: float = None,
+        market_liquidity: float = None,
+        market_end_date = None,
+        symbol: str = "CRYPTO",
     ) -> ExecutionResult:
         """
         シグナルに基づいて注文を実行
@@ -142,6 +161,9 @@ class TradeExecutor:
         Args:
             signal: 売買シグナル
             amount: 注文金額 (None = 自動計算)
+            market_liquidity: マーケット流動性
+            market_end_date: マーケット終了日時
+            symbol: シンボル (相関管理用)
         
         Returns:
             ExecutionResult
@@ -162,7 +184,49 @@ class TradeExecutor:
                 message="HOLD - 取引なし",
             )
         
-        # 金額計算
+        # ========== 監査 ==========
+        if self.use_auditor and self.auditor:
+            audit_result = self.auditor.audit(
+                market_id=signal.market_id,
+                question=signal.question,
+                liquidity=market_liquidity or 50000,
+                end_date=market_end_date,
+                llm_reasoning=signal.reasoning,
+                original_confidence=signal.confidence,
+            )
+            
+            if not audit_result.passed:
+                return ExecutionResult(
+                    success=False,
+                    signal=signal,
+                    message=f"監査ブロック: {[f.value for f in audit_result.flags]}",
+                )
+            
+            # 信頼度を調整
+            signal.confidence = audit_result.adjusted_confidence
+        
+        # ========== リスクチェック ==========
+        if self.use_risk_manager and self.risk_manager:
+            risk_check = self.risk_manager.check_trade(
+                market_id=signal.market_id,
+                symbol=symbol,
+                edge=signal.edge,
+                confidence=signal.confidence,
+                market_price=signal.market_price,
+            )
+            
+            if not risk_check.allowed:
+                return ExecutionResult(
+                    success=False,
+                    signal=signal,
+                    message=f"リスクブロック: {risk_check.blocks}",
+                )
+            
+            # リスク管理からポジションサイズを取得
+            if risk_check.position_size:
+                amount = risk_check.position_size.amount
+        
+        # 金額計算 (リスク管理がない場合)
         if amount is None:
             amount = self.calculate_amount(signal)
         
