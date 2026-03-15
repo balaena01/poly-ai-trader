@@ -2,21 +2,78 @@
 
 Polymarket AI 自動売買システム
 
-## 特徴
+## アーキテクチャ
 
-- **Scanner**: Polymarket + Binance リアルタイム監視
-- **Analyst**: LLM + LightGBM + Orderflow の Bayesian 統合
-- **Executor**: 自動注文実行 (ドライラン対応)
+```
+┌────────────────────────────────────────────────────────────────┐
+│                      Poly AI Trader                             │
+├────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              リアルタイム層 (常時稼働)                   │   │
+│  │  ┌──────────────┐    ┌──────────────┐                   │   │
+│  │  │  WebSocket   │───▶│   Executor   │                   │   │
+│  │  │  価格監視    │    │   即時売買   │                   │   │
+│  │  └──────────────┘    └──────────────┘                   │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                            ▲                                    │
+│                            │ シグナル & トリガー条件            │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              分析層 (5-60分間隔)                         │   │
+│  │  ┌────────┐  ┌──────────┐  ┌────────┐  ┌────────────┐   │   │
+│  │  │ News   │─▶│ Analyst  │─▶│Auditor │─▶│Risk Manager│   │   │
+│  │  │Fetcher │  │LLM+ML+OF │  │  監査  │  │  リスク    │   │   │
+│  │  └────────┘  └──────────┘  └────────┘  └────────────┘   │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                            ▲                                    │
+│                            │ 戦略更新 (50トレードごと)          │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              学習層 (バックグラウンド)                   │   │
+│  │  ┌──────────────┐    ┌──────────────┐                   │   │
+│  │  │ Factor Miner │───▶│ Auto-Killer  │                   │   │
+│  │  │  戦略生成    │    │  戦略淘汰    │                   │   │
+│  │  └──────────────┘    └──────────────┘                   │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└────────────────────────────────────────────────────────────────┘
+```
+
+## 実行フロー
+
+```
+LLM分析 (5-60分間隔、解決時間に応じて可変)
+    ↓
+シグナル生成 → トリガー条件セット
+    ↓
+WebSocket 常時監視
+    ↓
+条件一致 → 即座に売買
+```
+
+| 処理 | 頻度 | 方式 |
+|------|------|------|
+| LLM分析 | 5-60分 (ルールベース可変) | バッチ |
+| 価格監視 | 常時 | WebSocket |
+| 売買執行 | 条件一致時 | 即時 |
+| 戦略更新 | 50トレードごと | Factor Miner |
+
+**分析間隔の自動調整:**
+```python
+解決まで < 2時間  → 5分間隔
+解決まで < 24時間 → 15分間隔
+解決まで < 7日    → 60分間隔
+それ以上          → 4時間間隔
+```
 
 ## クイックスタート
 
 ```bash
 # インストール
 pip install -r requirements.txt
+pip install scrapling  # ニュース取得用 (オプション)
 
 # 環境変数設定
 cp .env.example .env
-# .env を編集
 
 # マーケットスキャン
 python main.py scan
@@ -27,8 +84,21 @@ python main.py analyze -n 5
 # 取引 (ドライラン)
 python main.py trade --execute
 
-# 自動ループ (60分間隔)
-python main.py run --interval 60
+# 自動ループ
+python main.py run
+```
+
+## データ取得
+
+```bash
+# 過去価格データ取得
+python -m data_fetcher.history --days 30 --limit 10
+
+# ニュース検索 (Google News)
+python -m data_fetcher.news_fetcher --query "Bitcoin price"
+
+# マーケット用ニュース
+python -m data_fetcher.news_fetcher --market "Will BTC reach $100k?"
 ```
 
 ## 環境変数
@@ -40,70 +110,38 @@ POLY_FUNDER_ADDRESS=0x...
 
 # LLM (LiteLLM 自動読み込み)
 ANTHROPIC_API_KEY=sk-ant-api03-xxx
-# または
-OPENAI_API_KEY=sk-xxx
-GROQ_API_KEY=gsk_xxx
 ```
 
 ## LLM モデル
-
-```bash
-# 利用可能なモデル一覧
-python main.py models
-```
 
 | エイリアス | モデル | 価格 |
 |-----------|--------|------|
 | `claude-haiku-4.5` | claude-haiku-4-5 | $1/MTok (デフォルト) |
 | `claude-sonnet-4.6` | claude-sonnet-4-6 | $3/MTok |
-| `claude-opus-4.6` | claude-opus-4-6 | $5/MTok |
 | `gpt-4o-mini` | gpt-4o-mini | $0.15/MTok |
-| `groq/llama-70b` | Llama 3.1 70B | 無料枠あり |
 
-```bash
-# モデル指定
-python main.py analyze -m claude-sonnet-4.6 -n 3
-```
-
-## アーキテクチャ
+## ディレクトリ構成
 
 ```
 poly-ai-trader/
-├── client/
-│   └── polymarket.py       # Polymarket API
-├── scanner/
-│   └── market_scanner.py   # Binance + Polymarket 監視
-├── analyst/
-│   ├── llm_analyst.py      # LLM (LiteLLM)
-│   ├── ml_analyst.py       # LightGBM
-│   ├── orderflow.py        # クジラ/流動性検出
-│   ├── bayesian.py         # Bayesian統合
-│   ├── ensemble.py         # 全シグナル統合
-│   └── features.py         # 30特徴量
-├── executor/
-│   └── trade_executor.py   # 注文実行
-├── models/                 # 学習済みモデル
-├── docs/
-│   └── ROADMAP.md          # 開発計画
-└── main.py                 # CLI
-```
-
-## シグナル統合 (Bayesian)
-
-```
-Market:     53% UP
-LLM:        64%
-LightGBM:   69%
-Orderflow:  72%
-    ↓
-Posterior:  81%
-Final:      76.9%
-Edge:       +23.9%
+├── client/           # Polymarket API
+├── scanner/          # 市場監視
+├── analyst/          # LLM + ML + Orderflow + Bayesian
+├── executor/         # 注文実行
+├── risk/             # リスク管理 + 監査
+├── factor/           # 自動学習
+├── data_fetcher/     # データ取得
+│   ├── history.py        # 過去価格 (Polymarket API)
+│   ├── websocket_client.py  # リアルタイム (WebSocket)
+│   └── news_fetcher.py   # ニュース (Scrapling/Google)
+├── data/
+│   ├── historical/   # 過去価格データ
+│   ├── news/         # ニュースキャッシュ
+│   └── factors/      # ファクターDB
+└── main.py           # CLI
 ```
 
 ## 開発ロードマップ
-
-詳細: [docs/ROADMAP.md](docs/ROADMAP.md)
 
 | Phase | 内容 | 状態 |
 |-------|------|------|
@@ -112,11 +150,10 @@ Edge:       +23.9%
 | 3 | Risk Manager + Auditor | ✅ |
 | 4 | Factor Miner + Auto-learning | ✅ |
 
-**全Phase完了！** 🎉
+詳細: [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## 注意事項
 
 - **秘密鍵の管理**: `.env` に保存、`.gitignore` に追加済み
 - **リスク**: 予測市場は投機的。余剰資金で
-- **規制**: 地域によっては利用制限あり
 - **ドライラン**: デフォルトで有効。`--live` で本番実行

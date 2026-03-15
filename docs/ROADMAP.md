@@ -7,22 +7,56 @@
 ## アーキテクチャ概要
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Poly AI Trader                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────┐    ┌─────────────┐    ┌─────────┐             │
-│  │ SCANNER │───▶│   ANALYST   │───▶│EXECUTOR │             │
-│  └─────────┘    └─────────────┘    └─────────┘             │
-│       │               │                 │                   │
-│       ▼               ▼                 ▼                   │
-│  ┌─────────┐    ┌─────────────┐    ┌─────────┐             │
-│  │ FACTOR  │    │   AUDITOR   │    │  RISK   │             │
-│  │  MINER  │    │             │    │ MANAGER │             │
-│  └─────────┘    └─────────────┘    └─────────┘             │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                      Poly AI Trader                             │
+├────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              リアルタイム層 (常時稼働)                   │   │
+│  │  WebSocket ──▶ 価格監視 ──▶ トリガー判定 ──▶ 即時売買   │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                            ▲                                    │
+│                            │ シグナル & トリガー条件            │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              分析層 (5-60分間隔)                         │   │
+│  │  News ──▶ Analyst ──▶ Auditor ──▶ Risk Manager          │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                            ▲                                    │
+│                            │ 戦略更新 (50トレードごと)          │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │              学習層 (バックグラウンド)                   │   │
+│  │  Factor Miner ──▶ Backtest ──▶ Auto-Killer              │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└────────────────────────────────────────────────────────────────┘
 ```
+
+### 実行モデル
+
+| 層 | 処理 | 頻度 | 方式 |
+|----|------|------|------|
+| リアルタイム | 価格監視・売買 | 常時 | WebSocket |
+| 分析 | LLM予測・シグナル生成 | 5-60分 | バッチ |
+| 学習 | 戦略生成・淘汰 | 50トレードごと | バックグラウンド |
+
+### 分析間隔の自動調整 (ルールベース)
+
+```python
+def get_analysis_interval(market) -> int:
+    """分析間隔 (分)"""
+    time_to_resolution = market.end_date - datetime.now()
+    
+    if time_to_resolution < timedelta(hours=2):
+        return 5     # 解決直前
+    elif time_to_resolution < timedelta(hours=24):
+        return 15    # 24時間以内
+    elif time_to_resolution < timedelta(days=7):
+        return 60    # 1週間以内
+    else:
+        return 240   # それ以上
+```
+
+**設計思想:** LLMは「戦略家」、WebSocketは「執行官」
 
 ---
 
@@ -46,14 +80,6 @@
 - [x] ドライランモード
 - [x] CLI (scan, analyze, trade, run)
 
-### 使い方
-```bash
-python main.py scan          # スキャン
-python main.py analyze -n 5  # 分析
-python main.py trade --execute --dry-run  # ドライラン
-python main.py run --interval 60  # 自動ループ
-```
-
 ---
 
 ## Phase 2: シグナル強化 ✅ 完了
@@ -68,37 +94,27 @@ python main.py run --interval 60  # 自動ループ
 | Orderflow Detector | クジラ検出、流動性シフト、大口注文クラスタ |
 | Bayesian Aggregator | 複数シグナルの確率的統合 |
 
-### 実装内容
-- [x] 特徴量エンジニアリング (30特徴量)
-  - 価格モメンタム (1m, 5m, 15m, 1h)
-  - ボラティリティ (ATR, Bollinger)
-  - オーダーブック不均衡
-  - ボリュームプロファイル
-  - センチメント指標
-- [x] LightGBM モデル学習
-- [x] オーダーフロー検出
-  - 大口注文 (> $10k)
-  - Bid/Ask 不均衡
-  - 流動性の急変
-- [x] Bayesian Aggregation
-  ```
-  Market: 53% UP
-  LLM Signal: 64%
-  LightGBM: 69%
-  Orderflow: 72%
-  ↓
-  Bayesian Posterior: 81%
-  Final: 76.9%
-  Edge: 23.9%
-  ```
+### Bayesian統合例
+```
+Market:     53% UP
+LLM:        64%
+LightGBM:   69%
+Orderflow:  72%
+    ↓
+Posterior:  81%
+Final:      76.9%
+Edge:       +23.9%
+```
 
 ### ファイル構成
 ```
 analyst/
-├── llm_analyst.py      # 既存
-├── ml_analyst.py       # NEW: LightGBM
-├── orderflow.py        # NEW: オーダーフロー
-└── bayesian.py         # NEW: Bayesian統合
+├── llm_analyst.py      # LLM
+├── ml_analyst.py       # LightGBM
+├── orderflow.py        # オーダーフロー
+├── bayesian.py         # Bayesian統合
+├── ensemble.py         # 全シグナル統合
+└── features.py         # 30特徴量
 ```
 
 ---
@@ -114,17 +130,22 @@ analyst/
 | Risk Manager | Kelly, ドローダウン, 相関管理 |
 | Auditor | ハルシネーション検出, 低流動性ブロック |
 
-### 実装内容
-- [x] Quarter Kelly サイジング (改良版)
-- [x] 3連敗停止ルール
-- [x] 15%ドローダウン → 完全停止
-- [x] BTC/ETH 相関キャップ (同時エクスポージャー制限)
-- [x] 毎注文前のEV再計算
-- [x] Auditor
-  - ハルシネーション/検証不能ニュースをフラグ
-  - 解決まで10分未満のマーケットをブロック
-  - 低流動性マーケットをブロック
-  - フラグごとに信頼度8%ペナルティ
+### リスクルール
+| ルール | 設定 |
+|--------|------|
+| Kelly | Quarter Kelly (25%) |
+| 最大ポジション | 10% |
+| 連敗停止 | 3連敗 |
+| ドローダウン | 15%で完全停止 |
+| 相関キャップ | 20% |
+
+### Auditorフラグ
+| フラグ | ペナルティ | ブロック |
+|--------|-----------|---------|
+| ハルシネーション | 20% | ✗ |
+| 検証不能 | 10% | ✗ |
+| 低流動性 (<$10k) | 8% | **✓** |
+| 解決間近 (<10分) | 15% | **✓** |
 
 ### ファイル構成
 ```
@@ -143,22 +164,14 @@ risk/
 
 | 名前 | 説明 |
 |------|------|
-| Factor Miner | 仮説生成 + バックテスト |
+| Factor Miner | LLM仮説生成 + バックテスト |
 | Auto-Killer | 性能不良ファクターの自動除去 |
 
-### 実装内容
-- [x] Factor Miner
-  - Claude Haiku ($0.25/1M tokens) で仮説生成
-  - バックテスト実行
-  - IC > 0.05 のファクターのみ保持
-  - 10個のアクティブファクター管理
-- [x] Auto-Killer
-  - 50トレード後に性能評価
-  - 基準未達のファクターを自動削除
-- [x] ファクター管理DB
-  - 生成日時
-  - パフォーマンス履歴
-  - IC, Sharpe, Win Rate
+### ファクター管理
+- 最大10アクティブファクター
+- IC > 0.05 で採用
+- 50トレード後に評価
+- 5連敗 or IC不足で淘汰
 
 ### ファイル構成
 ```
@@ -170,27 +183,56 @@ factor/
 
 ---
 
+## データ取得 ✅ 完了
+
+### コンポーネント
+
+| 名前 | 説明 |
+|------|------|
+| PriceHistoryFetcher | Polymarket過去価格 (/prices-history) |
+| PolyWebSocket | リアルタイム価格ストリーム |
+| NewsFetcher | Scrapling + Google News |
+
+### Polymarket API
+
+| 機能 | エンドポイント | レート制限 |
+|------|---------------|-----------|
+| 過去価格 | `/prices-history` | 1,000 req/10s |
+| オーダーブック | `/book` | 1,500 req/10s |
+| WebSocket | `wss://ws-subscriptions-clob.polymarket.com/ws/market` | - |
+
+### ニュースソース
+- **Scrapling対応**: Decrypt, CoinDesk, CoinTelegraph, TheBlock
+- **Scrapling不要**: Google News RSS
+
+### ファイル構成
+```
+data_fetcher/
+├── history.py          # 過去価格
+├── websocket_client.py # WebSocket
+└── news_fetcher.py     # ニュース (Scrapling/Google)
+```
+
+---
+
 ## 技術スタック
 
 | カテゴリ | 技術 |
 |---------|------|
 | 言語 | Python 3.9+ |
 | ML | LightGBM |
-| LLM | LiteLLM (Anthropic直接, OpenAI, Groq対応) |
-| エージェント | LangGraph (Phase 4) |
-| 価格データ | Binance WebSocket |
+| LLM | LiteLLM (Anthropic, OpenAI, Groq) |
+| スクレイピング | Scrapling (ステルスモード) |
+| 価格データ | Polymarket WebSocket |
 | 執行 | py-clob-client |
-| ウォレット | Polygon Wallet (秘密鍵) |
 
 ### LLM モデル
 
-| エイリアス | モデル | 価格 |
-|-----------|--------|------|
-| `claude-opus-4.6` | claude-opus-4-6 | $5/MTok |
-| `claude-sonnet-4.6` | claude-sonnet-4-6 | $3/MTok |
-| `claude-haiku-4.5` | claude-haiku-4-5 | **$1/MTok** (デフォルト) |
-| `gpt-4o-mini` | gpt-4o-mini | $0.15/MTok |
-| `groq/llama-70b` | groq/llama-3.1-70b | 無料枠あり |
+| エイリアス | モデル | 価格 | 用途 |
+|-----------|--------|------|------|
+| `claude-haiku-4.5` | claude-haiku-4-5 | $1/MTok | デフォルト分析 |
+| `claude-sonnet-4.6` | claude-sonnet-4-6 | $3/MTok | 高精度分析 |
+| `gpt-4o-mini` | gpt-4o-mini | $0.15/MTok | 低コスト |
 
 ---
 
@@ -202,6 +244,7 @@ factor/
 | 2 | シグナル強化 | ✅ 完了 |
 | 3 | リスク管理 | ✅ 完了 |
 | 4 | 自動学習 | ✅ 完了 |
+| - | データ取得 | ✅ 完了 |
 
 ---
 
@@ -210,5 +253,4 @@ factor/
 - [元ツイート](https://x.com/0xcristal/status/2033122263365804181)
 - [Polymarket Docs](https://docs.polymarket.com/)
 - [py-clob-client](https://github.com/Polymarket/py-clob-client)
-- [LightGBM](https://lightgbm.readthedocs.io/)
-- [LangGraph](https://langchain-ai.github.io/langgraph/)
+- [Scrapling](https://github.com/D4Vinci/Scrapling)
