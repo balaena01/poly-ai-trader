@@ -252,8 +252,18 @@ class PolyWebSocket:
             except Exception as e:
                 print(f"メッセージ処理エラー: {e}")
     
-    async def _handle_message(self, data: Dict):
+    async def _handle_message(self, data):
         """メッセージ処理"""
+        # リストの場合は各要素を処理
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    await self._handle_message(item)
+            return
+        
+        if not isinstance(data, dict):
+            return
+        
         event_type = data.get("event_type", "")
         
         # オーダーブック
