@@ -164,6 +164,10 @@ class Orchestrator:
                 poly_client.connect(read_only=True)
                 balance = poly_client.get_balance()
                 print(f"💰 残高: ${balance:.2f} USDC")
+                
+                # RiskManager に残高設定
+                self.risk_manager.update_balance(balance)
+                
                 if self.dashboard:
                     await self.dashboard.update_state("balance", balance)
             except Exception as e:
