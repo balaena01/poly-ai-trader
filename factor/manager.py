@@ -350,33 +350,90 @@ class FactorManager:
 
 
 # テスト
-async def _test():
-    print("📦 Factor Manager テスト\n")
+async def _cli():
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Factor Manager")
+    parser.add_argument("--mine", help="新ファクター生成 (コンテキスト)")
+    parser.add_argument("--list", action="store_true", help="アクティブファクター一覧")
+    parser.add_argument("--stats", action="store_true", help="統計表示")
+    parser.add_argument("--leaderboard", action="store_true", help="リーダーボード")
+    parser.add_argument("--evaluate", action="store_true", help="全ファクター評価")
+    
+    args = parser.parse_args()
     
     manager = FactorManager(max_active_factors=5)
     
-    # 新しいファクターを生成
-    print("⛏️ 新ファクター生成中...")
-    factor = await manager.mine_new_factor(
-        context="BTC/ETH マーケット、ボラティリティ上昇中",
-        factor_type=FactorType.MOMENTUM,
-    )
+    if args.mine:
+        print(f"⛏️ 新ファクター生成中...")
+        print(f"   コンテキスト: {args.mine}\n")
+        
+        factor = await manager.mine_new_factor(
+            context=args.mine,
+            factor_type=FactorType.MOMENTUM,
+        )
+        
+        if factor:
+            print(f"✅ 追加: {factor.hypothesis.name}")
+            print(f"   ID: {factor.hypothesis.id}")
+            print(f"   説明: {factor.hypothesis.description}")
+        else:
+            print("❌ 生成失敗")
     
-    if factor:
-        print(f"\n✅ 追加: {factor.hypothesis.name}")
+    elif args.list:
+        print("📋 アクティブファクター:\n")
+        for f in manager.factors:
+            print(f"  • {f.hypothesis.name}")
+            print(f"    ID: {f.hypothesis.id}")
+            print(f"    トレード数: {f.total_trades}")
+            print(f"    IC: {f.backtest_result.ic:.4f}" if f.backtest_result else "    IC: 未評価")
+            print()
     
-    # 統計
-    stats = manager.get_stats()
-    print(f"\n📊 統計:")
-    print(f"  アクティブ: {stats.active_factors}")
-    print(f"  平均IC: {stats.avg_ic:.3f}")
+    elif args.stats:
+        stats = manager.get_stats()
+        print("📊 統計:\n")
+        print(f"  総ファクター:     {stats.total_factors}")
+        print(f"  アクティブ:       {stats.active_factors}")
+        print(f"  淘汰済み:         {stats.killed_factors}")
+        print(f"  平均IC:           {stats.avg_ic:.4f}")
+        print(f"  平均Sharpe:       {stats.avg_sharpe:.2f}")
+        if stats.best_factor:
+            print(f"  ベスト:           {stats.best_factor}")
+        if stats.worst_factor:
+            print(f"  ワースト:         {stats.worst_factor}")
     
-    # リーダーボード
-    print(f"\n🏆 リーダーボード:")
-    for entry in manager.get_leaderboard():
-        print(f"  {entry['rank']}. {entry['name']} (IC: {entry['ic']})")
+    elif args.leaderboard:
+        print("🏆 リーダーボード:\n")
+        leaderboard = manager.get_leaderboard()
+        if leaderboard:
+            for entry in leaderboard:
+                ic_str = f"{entry['ic']:.4f}" if isinstance(entry['ic'], float) else entry['ic']
+                print(f"  {entry['rank']}. {entry['name']} (IC: {ic_str})")
+        else:
+            print("  (ファクターがありません)")
+    
+    elif args.evaluate:
+        print("🔍 全ファクター評価中...\n")
+        killed = manager.evaluate_all()
+        
+        if killed:
+            print(f"❌ 淘汰: {len(killed)} ファクター")
+            for f in killed:
+                print(f"   - {f.hypothesis.name}")
+        else:
+            print("✅ 淘汰なし")
+    
+    else:
+        # デモ
+        print("📦 Factor Manager\n")
+        print("使い方:")
+        print("  --mine 'コンテキスト'  新ファクター生成")
+        print("  --list               アクティブファクター一覧")
+        print("  --stats              統計表示")
+        print("  --leaderboard        リーダーボード")
+        print("  --evaluate           全ファクター評価")
 
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(_test())
+    asyncio.run(_cli())
