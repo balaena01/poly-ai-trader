@@ -362,11 +362,13 @@ class Orchestrator:
                 return
             
             # ポジションサイズ計算
-            size = self.risk_manager.calc_position_size(
+            market_price = getattr(market, 'yes_price', 0.5)
+            position_result = self.risk_manager.calculate_position_size(
                 edge=signal.edge,
                 confidence=adjusted_confidence,
-                max_pct=self.config.max_position_pct,
+                market_price=market_price,
             )
+            size = position_result.amount
             
             # トリガー設定
             await self._set_trigger(market, signal, size)
