@@ -38,10 +38,11 @@ class RunMode(Enum):
 class TriggerCondition:
     """売買トリガー条件"""
     market_id: str
-    token_id: str
+    token_id: str           # 実際に売買するトークン (BUY_NO なら NO token)
+    watch_token_id: str     # 価格監視用トークン (常に YES token)
     question: str
-    side: str  # "BUY" or "SELL"
-    target_price: float  # この価格以下で買い / 以上で売り
+    side: str  # "BUY_YES" / "BUY_NO" / "SELL_YES" / "SELL_NO"
+    target_price: float  # この価格条件で発火 (YES価格ベース)
     size: float
     signal_confidence: float
     created_at: datetime = field(default_factory=datetime.now)
@@ -352,10 +353,10 @@ class Orchestrator:
                     "size": trigger.size,
                     "success": result.success,
                 })
-                await self.dashboard.remove_trigger(trigger.token_id)
+                await self.dashboard.remove_trigger(trigger.watch_token_id)
             
-            # トリガー削除
-            del self.active_triggers[trigger.token_id]
+            # トリガー削除 (watch_token_id で管理)
+            del self.active_triggers[trigger.watch_token_id]
             
         except Exception as e:
             print(f"   ❌ 実行エラー: {e}")
@@ -502,15 +503,22 @@ class Orchestrator:
     
     async def _set_trigger(self, market, signal, size: float):
         """トリガー条件を設定"""
-        token_id = getattr(market, 'yes_token_id', None)
-        if not token_id:
+        # BUY_YES/SELL_YES は YES token、BUY_NO/SELL_NO は NO token
+        if signal.action.value in ("BUY_YES", "SELL_YES"):
+            token_id = getattr(market, 'yes_token_id', None)
+        else:
+            token_id = getattr(market, 'no_token_id', None) or getattr(market, 'yes_token_id', None)
+        
+        # 価格監視用のYESトークンID (常にYES価格で判定)
+        watch_token_id = getattr(market, 'yes_token_id', None)
+        if not watch_token_id:
             return
         
         market_id = getattr(market, 'condition_id', str(id(market)))
         question = getattr(market, 'question', str(market))
         
-        # 既存トリガーをチェック
-        existing_trigger = self.active_triggers.get(token_id)
+        # 既存トリガーをチェック (watch_token_id で管理)
+        existing_trigger = self.active_triggers.get(watch_token_id)
         if existing_trigger:
             # 同じ方向なら維持
             if existing_trigger.side == signal.action.value:
@@ -520,7 +528,7 @@ class Orchestrator:
             # 反対方向 → 古いトリガーを削除
             print(f"   🔄 予測反転: {existing_trigger.side} → {signal.action.value}")
             self.risk_manager.remove_pending_exposure(existing_trigger.size)
-            del self.active_triggers[token_id]
+            del self.active_triggers[watch_token_id]
         
         # 目標価格 (現在価格から少し有利な位置)
         # YES価格ベースで計算
@@ -544,7 +552,8 @@ class Orchestrator:
         
         trigger = TriggerCondition(
             market_id=market_id,
-            token_id=token_id,
+            token_id=token_id,           # 実際に売買するトークン
+            watch_token_id=watch_token_id,  # 価格監視用 (YES token)
             question=question,
             side=signal.action.value,
             target_price=target_price,
@@ -553,7 +562,8 @@ class Orchestrator:
             expires_at=datetime.now() + timedelta(minutes=self.config.trigger_expiry_minutes),
         )
         
-        self.active_triggers[token_id] = trigger
+        # YES token で監視 (WebSocket は YES 価格を送ってくる)
+        self.active_triggers[watch_token_id] = trigger
         
         # ペンディングエクスポージャーに追加
         self.risk_manager.add_pending_exposure(size)
