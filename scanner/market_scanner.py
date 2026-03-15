@@ -202,38 +202,57 @@ class MarketScanner:
                             "_q": kw,
                             "limit": limit // len(keywords),
                             "active": "true",
+                            "closed": "false",  # 終了済みマーケット除外
                         }
                     )
                     resp.raise_for_status()
                     data = resp.json()
                     
                     for m in data:
-                        # トークン情報を抽出
-                        tokens = m.get("tokens", [])
-                        yes_token = next((t for t in tokens if t.get("outcome") == "Yes"), None)
-                        no_token = next((t for t in tokens if t.get("outcome") == "No"), None)
-                        
-                        if not yes_token:
+                        # 終了済みスキップ
+                        if m.get("closed", False):
                             continue
+                        
+                        # トークンID抽出 (clobTokenIds から)
+                        clob_ids = m.get("clobTokenIds", "[]")
+                        try:
+                            token_ids = json.loads(clob_ids) if isinstance(clob_ids, str) else clob_ids
+                        except:
+                            token_ids = []
+                        
+                        yes_token_id = token_ids[0] if token_ids else ""
+                        no_token_id = token_ids[1] if len(token_ids) > 1 else None
+                        
+                        if not yes_token_id:
+                            continue
+                        
+                        # 価格抽出 (outcomePrices から)
+                        outcome_prices = m.get("outcomePrices", "[\"0.5\", \"0.5\"]")
+                        try:
+                            prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
+                            yes_price = float(prices[0]) if prices else 0.5
+                        except:
+                            yes_price = 0.5
                         
                         # 終了日時をパース
                         end_date = None
-                        if m.get("end_date_iso"):
+                        end_date_str = m.get("endDateIso") or m.get("end_date_iso")
+                        if end_date_str:
                             try:
                                 end_date = datetime.fromisoformat(
-                                    m["end_date_iso"].replace("Z", "+00:00")
+                                    end_date_str.replace("Z", "+00:00")
                                 )
                             except:
                                 pass
                         
                         market = MarketData(
-                            market_id=m.get("condition_id", ""),
+                            market_id=m.get("conditionId") or m.get("condition_id", ""),
                             question=m.get("question", ""),
-                            yes_token_id=yes_token.get("token_id", ""),
-                            no_token_id=no_token.get("token_id") if no_token else None,
-                            yes_price=float(yes_token.get("price", 0.5)),
-                            volume=float(m.get("volume", 0) or 0),
-                            liquidity=float(m.get("liquidity", 0) or 0),
+                            yes_token_id=yes_token_id,
+                            no_token_id=no_token_id,
+                            yes_price=yes_price,
+                            volume=float(m.get("volumeNum") or m.get("volume", 0) or 0),
+                            liquidity=float(m.get("liquidityNum") or m.get("liquidity", 0) or 0),
                             end_date=end_date,
                         )
                         

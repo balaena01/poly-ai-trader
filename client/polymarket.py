@@ -195,7 +195,11 @@ class PolyClient:
         """
         import httpx
         
-        params = {"limit": limit, "active": str(active).lower()}
+        params = {
+            "limit": limit,
+            "active": str(active).lower(),
+            "closed": "false",  # 終了済みマーケット除外
+        }
         
         try:
             resp = httpx.get(f"{GAMMA_API}/markets", params=params)
@@ -228,7 +232,12 @@ class PolyClient:
         try:
             resp = httpx.get(
                 f"{GAMMA_API}/markets",
-                params={"_q": query, "limit": limit, "active": "true"}
+                params={
+                    "_q": query,
+                    "limit": limit,
+                    "active": "true",
+                    "closed": "false",  # 終了済みマーケット除外
+                }
             )
             resp.raise_for_status()
             data = resp.json()
