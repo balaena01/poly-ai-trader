@@ -301,6 +301,42 @@ class TradeExecutor:
         
         return result
     
+    async def execute_order(
+        self,
+        market_id: str,
+        token_id: str,
+        side: str,
+        size: float,
+        price: float,
+    ) -> ExecutionResult:
+        """
+        シンプルな注文実行 (Orchestrator用)
+        
+        Args:
+            market_id: マーケットID
+            token_id: トークンID
+            side: "BUY" or "SELL"
+            size: サイズ (USDC)
+            price: 価格
+        
+        Returns:
+            ExecutionResult
+        """
+        # Signal オブジェクト作成
+        signal = Signal(
+            market_id=market_id,
+            token_id=token_id,
+            question=f"Market {market_id[:16]}",
+            action=Action.BUY if side.upper() == "BUY" else Action.SELL,
+            market_price=price,
+            predicted_prob=price,  # ダミー
+            edge=0.1,  # ダミー
+            confidence=0.8,  # ダミー
+            reasoning="Trigger execution",
+        )
+        
+        return await self.execute(signal, amount=size)
+    
     async def execute_signals(
         self,
         signals: List[Signal],
