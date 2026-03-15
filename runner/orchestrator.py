@@ -19,6 +19,7 @@ from executor import TradeExecutor
 from risk import RiskManager, Auditor
 from data_fetcher import PolyWebSocket, GoogleNewsFetcher, NewsFetcher, PriceHistoryFetcher
 from factor import FactorManager
+from tracker import PositionTracker
 
 # Dashboard (optional)
 try:
@@ -106,6 +107,7 @@ class Orchestrator:
         self.risk_manager = RiskManager()
         self.auditor = Auditor()
         self.factor_manager = FactorManager()
+        self.position_tracker = PositionTracker()
         # Google News RSS (高速・安定)
         self.news_fetcher = GoogleNewsFetcher()
         
@@ -195,10 +197,15 @@ class Orchestrator:
         if self.websocket:
             await self.websocket.disconnect()
         
+        # PnL計算
+        tracker_stats = self.position_tracker.get_stats()
+        
         print(f"\n📊 最終統計:")
         print(f"   サイクル: {self.stats['cycles']}")
         print(f"   シグナル: {self.stats['signals_generated']}")
         print(f"   取引: {self.stats['trades_executed']} (成功: {self.stats['trades_success']})")
+        print(f"   オープン: {tracker_stats['open']} ポジション")
+        print(f"   総PnL: ${tracker_stats['total_pnl']:+.2f}")
     
     # ========== スキャン ==========
     
@@ -282,14 +289,23 @@ class Orchestrator:
                 print(f"   ✅ 約定: {result.message}")
                 self.executed_markets.add(trigger.market_id)
                 
+                # ポジション記録
+                self.position_tracker.record_trade(
+                    market_id=trigger.market_id,
+                    token_id=trigger.token_id,
+                    question=trigger.question,
+                    side=trigger.side,
+                    entry_price=price,
+                    size=trigger.size,
+                )
+                
                 # ファクター記録 (アクティブファクターがあれば)
                 active_factors = self.factor_manager.get_active_factors()
                 if active_factors:
-                    # 最初のアクティブファクターに記録 (将来的には紐付け改善)
                     factor = active_factors[0]
                     self.factor_manager.record_trade(
                         factor_id=factor.hypothesis.id,
-                        pnl=0,  # 実際のPnLは解決時に更新
+                        pnl=0,
                         entry_price=price,
                         market_id=trigger.market_id,
                     )
@@ -333,6 +349,15 @@ class Orchestrator:
                         break
                     
                     await self._analyze_market(market)
+                
+                # 解決済みマーケットをチェック
+                await self._check_resolved_markets()
+                
+                # ダッシュボードにPnL更新
+                if self.dashboard:
+                    stats = self.position_tracker.get_stats()
+                    await self.dashboard.update_state("pnl", stats["total_pnl"])
+                    await self.dashboard.update_state("balance", stats["total_exposure"])
                 
                 # 次の間隔を決定
                 interval = self._get_analysis_interval(markets)
@@ -478,6 +503,38 @@ class Orchestrator:
                 "target_price": target_price,
                 "size": size,
             })
+    
+    async def _check_resolved_markets(self):
+        """解決済みマーケットをチェックしてPnL更新"""
+        open_market_ids = self.position_tracker.get_open_market_ids()
+        
+        if not open_market_ids:
+            return
+        
+        try:
+            # Polymarketから解決状態を取得
+            from client import PolyClient
+            client = PolyClient()
+            client.connect(read_only=True)
+            
+            for market_id in open_market_ids:
+                try:
+                    # マーケット情報取得
+                    market = client.get_market(market_id)
+                    if market and market.get("closed"):
+                        # 解決済み - outcome を確認
+                        # outcome: "YES" or "NO"
+                        outcome = market.get("outcome", "")
+                        if outcome:
+                            resolution = 1.0 if outcome.upper() == "YES" else 0.0
+                            pnl = self.position_tracker.resolve_by_market(market_id, resolution)
+                            if pnl != 0:
+                                print(f"💰 マーケット解決: PnL ${pnl:+.2f}")
+                except Exception as e:
+                    continue  # 個別エラーは無視
+                    
+        except Exception as e:
+            pass  # 静かに失敗
     
     def _get_analysis_interval(self, markets: List) -> int:
         """分析間隔を決定 (分)"""
