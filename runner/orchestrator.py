@@ -88,9 +88,10 @@ class OrchestratorConfig:
     max_position_pct: float = 0.10
     max_drawdown_pct: float = 0.15
     
-    # 利確・損切り (1.0/-1.0 で実質無効)
-    take_profit_pct: float = 1.0    # 無効 (解決まで保持)
-    stop_loss_pct: float = -1.0     # 無効 (解決まで保持)
+    # 利確・損切り
+    enable_exit: bool = False       # 早期クローズ機能
+    take_profit_pct: float = 0.50   # 50% で利確
+    stop_loss_pct: float = -0.50    # -50% で損切り
     
     # ニュース
     fetch_news: bool = True
@@ -622,6 +623,10 @@ class Orchestrator:
     
     async def _check_position_exits(self, markets: List):
         """利確・損切りをチェック"""
+        # 無効なら SKIP
+        if not self.config.enable_exit:
+            return
+        
         open_positions = self.position_tracker.get_open_positions()
         
         if not open_positions:

@@ -118,6 +118,9 @@ async def cmd_run(args):
         fetch_news=not args.no_news,
         dashboard=args.dashboard,
         dashboard_port=args.dashboard_port,
+        enable_exit=args.enable_exit,
+        take_profit_pct=args.take_profit,
+        stop_loss_pct=args.stop_loss,
     )
     
     orchestrator = Orchestrator(config)
@@ -192,6 +195,9 @@ def main():
     p_run.add_argument("--dashboard-port", type=int, default=8080, help="ダッシュボードポート")
     p_run.add_argument("--dry-run", action="store_true", default=True, help="ドライラン")
     p_run.add_argument("--live", action="store_true", help="本番実行")
+    p_run.add_argument("--enable-exit", action="store_true", help="利確・損切りを有効化")
+    p_run.add_argument("--take-profit", type=float, default=0.50, help="利確% (デフォルト: 50%)")
+    p_run.add_argument("--stop-loss", type=float, default=-0.50, help="損切り% (デフォルト: -50%)")
     
     # markets
     p_markets = subparsers.add_parser("markets", help="マーケット一覧")
