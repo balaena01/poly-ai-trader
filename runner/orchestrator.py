@@ -64,8 +64,8 @@ class OrchestratorConfig:
     """設定"""
     # 分析
     llm_model: str = "claude-haiku-4-5-20251001"
-    min_edge: float = 0.01  # テスト用 (本番: 0.10)
-    min_confidence: float = 0.20  # テスト用 (本番: 0.60)
+    min_edge: float = 0.10
+    min_confidence: float = 0.60
     max_markets: int = 10
     
     # 実行
@@ -382,22 +382,22 @@ class Orchestrator:
                     "confidence": signal.confidence,
                 })
             
-            # Auditorチェック (テスト用: スキップ)
-            # audit_result = self.auditor.audit(
-            #     market_id=getattr(market, 'market_id', ''),
-            #     question=question,
-            #     liquidity=getattr(market, 'liquidity', 0),
-            #     end_date=getattr(market, 'end_date', None),
-            #     original_confidence=signal.confidence,
-            # )
-            # 
-            # if not audit_result.passed:
-            #     flags_str = ", ".join([f.value for f in audit_result.flags]) if audit_result.flags else "unknown"
-            #     print(f"   🚫 ブロック: {flags_str}")
-            #     return
+            # Auditorチェック
+            audit_result = self.auditor.audit(
+                market_id=getattr(market, 'market_id', ''),
+                question=question,
+                liquidity=getattr(market, 'liquidity', 0),
+                end_date=getattr(market, 'end_date', None),
+                original_confidence=signal.confidence,
+            )
             
-            # 信頼度調整 (テスト用: そのまま使用)
-            adjusted_confidence = signal.confidence
+            if not audit_result.passed:
+                flags_str = ", ".join([f.value for f in audit_result.flags]) if audit_result.flags else "unknown"
+                print(f"   🚫 ブロック: {flags_str}")
+                return
+            
+            # 信頼度調整
+            adjusted_confidence = audit_result.adjusted_confidence
             
             # 最小条件チェック
             if abs(signal.edge) < self.config.min_edge:
@@ -435,11 +435,9 @@ class Orchestrator:
         # 目標価格 (現在価格から少し有利な位置)
         current_price = getattr(market, 'yes_price', 0.5)
         if signal.action.value == "BUY":
-            # target_price = current_price * 0.98  # 2%下で買い (本番用)
-            target_price = current_price * 1.01  # テスト用: 即発火
+            target_price = current_price * 0.98  # 2%下で買い
         else:
-            # target_price = current_price * 1.02  # 2%上で売り (本番用)
-            target_price = current_price * 0.99  # テスト用: 即発火
+            target_price = current_price * 1.02  # 2%上で売り
         
         trigger = TriggerCondition(
             market_id=market_id,
@@ -466,10 +464,6 @@ class Orchestrator:
                 "target_price": target_price,
                 "size": size,
             })
-        
-        # テスト用: 即時発火
-        print(f"   🚀 テスト: 即時発火!")
-        await self._execute_trigger(trigger, current_price)
     
     def _get_analysis_interval(self, markets: List) -> int:
         """分析間隔を決定 (分)"""
