@@ -189,41 +189,53 @@ class NewsFetcher:
             page = await loop.run_in_executor(pool, fetch_sync)
         
         articles = []
-        article_elements = page.css(selectors["articles"])
+        seen_urls = set()
         
-        for elem in article_elements[:limit]:
+        # 全リンクを取得してフィルタリング
+        all_links = page.css("a")
+        
+        for link_elem in all_links:
             try:
-                title_elem = elem.css(selectors["title"]).first
-                link_elem = elem.css(selectors["link"]).first
-                summary_elem = elem.css(selectors["summary"]).first
+                href = link_elem.attrib.get("href", "")
+                text = link_elem.text.strip() if link_elem.text else ""
                 
-                if not title_elem or not link_elem:
-                    continue
-                
-                title = title_elem.text.strip()
-                link = link_elem.attrib.get("href", "")
-                summary = summary_elem.text.strip() if summary_elem else ""
-                
-                # スキップ条件
-                if not title or len(title) < 10:
-                    continue
-                
-                # 価格ページ等を除外
-                skip_patterns = ["/price/", "/prices/", "/market/", "/tag/", "/category/", "/author/"]
-                if any(p in link for p in skip_patterns):
+                # 空リンクスキップ
+                if not href or not text:
                     continue
                 
                 # 相対URL対応
-                if link and not link.startswith("http"):
+                if not href.startswith("http"):
                     from urllib.parse import urljoin
-                    link = urljoin(url, link)
+                    href = urljoin(url, href)
+                
+                # 重複スキップ
+                if href in seen_urls:
+                    continue
+                seen_urls.add(href)
+                
+                # ニュース記事っぽいURLのみ
+                article_patterns = ["/news/", "/article/", "/post/", "/20"]  # /2024/, /2025/ etc
+                skip_patterns = ["/price", "/tag/", "/category/", "/author/", "/login", "/signup", "#"]
+                
+                is_article = any(p in href for p in article_patterns)
+                should_skip = any(p in href for p in skip_patterns)
+                
+                if not is_article or should_skip:
+                    continue
+                
+                # タイトル長チェック
+                if len(text) < 15 or len(text) > 200:
+                    continue
                 
                 articles.append(NewsArticle(
-                    title=title,
-                    url=link,
+                    title=text,
+                    url=href,
                     source=source,
-                    summary=summary,
+                    summary="",
                 ))
+                
+                if len(articles) >= limit:
+                    break
                 
             except Exception:
                 continue
