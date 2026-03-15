@@ -88,9 +88,9 @@ class OrchestratorConfig:
     max_position_pct: float = 0.10
     max_drawdown_pct: float = 0.15
     
-    # 利確・損切り
-    take_profit_pct: float = 0.20   # 20% で利確
-    stop_loss_pct: float = -0.30    # -30% で損切り
+    # 利確・損切り (1.0/-1.0 で実質無効)
+    take_profit_pct: float = 1.0    # 無効 (解決まで保持)
+    stop_loss_pct: float = -1.0     # 無効 (解決まで保持)
     
     # ニュース
     fetch_news: bool = True
