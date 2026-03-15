@@ -435,9 +435,11 @@ class Orchestrator:
         # 目標価格 (現在価格から少し有利な位置)
         current_price = getattr(market, 'yes_price', 0.5)
         if signal.action.value == "BUY":
-            target_price = current_price * 0.98  # 2%下で買い
+            # target_price = current_price * 0.98  # 2%下で買い (本番用)
+            target_price = current_price * 1.01  # テスト用: 即発火
         else:
-            target_price = current_price * 1.02  # 2%上で売り
+            # target_price = current_price * 1.02  # 2%上で売り (本番用)
+            target_price = current_price * 0.99  # テスト用: 即発火
         
         trigger = TriggerCondition(
             market_id=market_id,
