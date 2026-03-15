@@ -345,7 +345,7 @@ class Orchestrator:
             )
             
             if not audit_result.passed:
-                flags_str = ", ".join([f.flag_type for f in audit_result.flags]) if audit_result.flags else "unknown"
+                flags_str = ", ".join([f.value for f in audit_result.flags]) if audit_result.flags else "unknown"
                 print(f"   🚫 ブロック: {flags_str}")
                 return
             
