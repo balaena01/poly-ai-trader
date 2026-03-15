@@ -69,6 +69,7 @@ class DashboardServer:
             "prices": {"BTC": 0, "ETH": 0},
             "price_history": [],  # For charts
             "edge_history": [],   # Edge over time
+            "balance_history": [],  # Balance over time
         }
         
         self._setup_routes()
@@ -106,6 +107,17 @@ class DashboardServer:
     async def update_state(self, key: str, value):
         """状態更新 + ブロードキャスト"""
         self.state[key] = value
+        
+        # Balance/PnL変更時に履歴記録
+        if key in ("balance", "pnl"):
+            self.state["balance_history"].append({
+                "time": datetime.now().isoformat(),
+                "balance": self.state["balance"],
+                "pnl": self.state["pnl"],
+            })
+            # 最新100件のみ保持
+            self.state["balance_history"] = self.state["balance_history"][-100:]
+        
         await self.manager.broadcast({
             "type": "update",
             "key": key,
@@ -811,12 +823,21 @@ class DashboardServer:
                 </div>
             </div>
             
-            <div class="panel full-width">
+            <div class="panel">
                 <div class="panel-header">
                     <span class="panel-title">◈ Edge Distribution</span>
                 </div>
                 <div class="chart-container">
                     <canvas id="edge-chart"></canvas>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">◈ Balance & PnL</span>
+                </div>
+                <div class="chart-container">
+                    <canvas id="balance-chart"></canvas>
                 </div>
             </div>
             
@@ -835,9 +856,11 @@ class DashboardServer:
         let ws;
         let reconnectInterval;
         let edgeChart;
+        let balanceChart;
         let edgeData = [];
+        let balanceData = [];
         
-        // Initialize Chart
+        // Initialize Charts
         function initChart() {
             const ctx = document.getElementById('edge-chart').getContext('2d');
             edgeChart = new Chart(ctx, {
@@ -885,6 +908,92 @@ class DashboardServer:
                     },
                 }
             });
+            
+            // Balance Chart
+            const ctx2 = document.getElementById('balance-chart').getContext('2d');
+            balanceChart = new Chart(ctx2, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Balance',
+                            data: [],
+                            borderColor: '#00ff88',
+                            backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            yAxisID: 'y',
+                        },
+                        {
+                            label: 'PnL',
+                            data: [],
+                            borderColor: '#ff00ff',
+                            backgroundColor: 'rgba(255, 0, 255, 0.05)',
+                            fill: false,
+                            tension: 0.4,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            yAxisID: 'y1',
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { 
+                            display: true,
+                            position: 'top',
+                            labels: { color: '#888899', font: { size: 10 } }
+                        },
+                    },
+                    scales: {
+                        x: {
+                            display: true,
+                            grid: { color: 'rgba(0, 255, 136, 0.05)' },
+                            ticks: { color: '#555566', maxTicksLimit: 6 },
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            grid: { color: 'rgba(0, 255, 136, 0.05)' },
+                            ticks: {
+                                color: '#00ff88',
+                                callback: v => '$' + v.toFixed(0)
+                            },
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            grid: { display: false },
+                            ticks: {
+                                color: '#ff00ff',
+                                callback: v => (v >= 0 ? '+' : '') + '$' + v.toFixed(0)
+                            },
+                        }
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'index',
+                    },
+                }
+            });
+        }
+        
+        function addBalancePoint(balance, pnl) {
+            const now = new Date().toLocaleTimeString();
+            balanceData.push({ time: now, balance: balance, pnl: pnl });
+            if (balanceData.length > 50) balanceData.shift();
+            
+            balanceChart.data.labels = balanceData.map(d => d.time);
+            balanceChart.data.datasets[0].data = balanceData.map(d => d.balance);
+            balanceChart.data.datasets[1].data = balanceData.map(d => d.pnl);
+            balanceChart.update('none');
         }
         
         function addEdgePoint(edge) {
@@ -966,15 +1075,31 @@ class DashboardServer:
             if (state.edge_history) {
                 state.edge_history.forEach(e => addEdgePoint(e.edge));
             }
+            
+            // Load balance history
+            if (state.balance_history) {
+                state.balance_history.forEach(b => addBalancePoint(b.balance, b.pnl));
+            }
+            
+            // Initial balance point
+            if (state.balance > 0) {
+                addBalancePoint(state.balance, state.pnl);
+            }
         }
         
         function updateField(key, value) {
             switch (key) {
                 case 'balance':
                     document.getElementById('balance').textContent = `$${value.toFixed(2)}`;
+                    // Update balance chart
+                    const currentPnl = parseFloat(document.getElementById('pnl').textContent.replace(/[^-0-9.]/g, '')) || 0;
+                    addBalancePoint(value, currentPnl);
                     break;
                 case 'pnl':
                     updatePnL(value);
+                    // Update balance chart
+                    const currentBalance = parseFloat(document.getElementById('balance').textContent.replace(/[^0-9.]/g, '')) || 0;
+                    addBalancePoint(currentBalance, value);
                     break;
                 case 'trades_today':
                     document.getElementById('trades-count').textContent = value;
