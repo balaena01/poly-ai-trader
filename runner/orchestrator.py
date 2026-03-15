@@ -404,6 +404,11 @@ class Orchestrator:
         if market_id in self.executed_markets:
             return
         
+        # 既にトリガー待機中ならスキップ
+        token_id = getattr(market, 'yes_token_id', None)
+        if token_id and token_id in self.active_triggers:
+            return
+        
         question = getattr(market, 'question', str(market))
         print(f"\n🧠 分析: {question[:50]}...")
         
