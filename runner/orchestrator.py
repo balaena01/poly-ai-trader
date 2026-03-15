@@ -56,7 +56,7 @@ class TriggerCondition:
 class OrchestratorConfig:
     """設定"""
     # 分析
-    llm_model: str = "claude-haiku-4.5"
+    llm_model: str = "claude-haiku-4-5-20251001-20251001"
     min_edge: float = 0.10
     min_confidence: float = 0.60
     max_markets: int = 10
@@ -447,7 +447,7 @@ class Orchestrator:
 # CLI用ヘルパー
 async def run_orchestrator(
     mode: str = "dry_run",
-    model: str = "claude-haiku-4.5",
+    model: str = "claude-haiku-4-5-20251001-20251001",
     min_edge: float = 0.10,
     max_markets: int = 10,
     fetch_news: bool = True,

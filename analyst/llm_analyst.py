@@ -78,7 +78,7 @@ MODELS = {
     # 最新世代 (2026年3月時点)
     "claude-opus-4.6": "claude-opus-4-6",           # 最高性能、エージェント/コーディング
     "claude-sonnet-4.6": "claude-sonnet-4-6",       # 速度と性能のバランス
-    "claude-haiku-4.5": "claude-haiku-4-5",         # 最速、低コスト ($1/MTok in)
+    "claude-haiku-4-5-20251001-20251001": "claude-haiku-4-5-20251001-20251001",         # 最速、低コスト ($1/MTok in)
     
     # レガシー (まだ利用可能)
     "claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
@@ -108,7 +108,7 @@ MODELS = {
 }
 
 # デフォルトモデル
-DEFAULT_MODEL = "claude-haiku-4.5"
+DEFAULT_MODEL = "claude-haiku-4-5-20251001-20251001"
 
 
 class LLMAnalyst:
@@ -333,7 +333,7 @@ def list_models():
     print("\n🤖 利用可能なモデル:\n")
     
     print("━━━ Anthropic (最新) ━━━")
-    for key in ["claude-opus-4.6", "claude-sonnet-4.6", "claude-haiku-4.5"]:
+    for key in ["claude-opus-4.6", "claude-sonnet-4.6", "claude-haiku-4-5-20251001-20251001"]:
         print(f"  {key:20} → {MODELS[key]}")
     
     print("\n━━━ Anthropic (レガシー) ━━━")
