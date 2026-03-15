@@ -400,8 +400,8 @@ class Orchestrator:
             adjusted_confidence = signal.confidence
             
             # 最小条件チェック
-            if signal.edge < self.config.min_edge:
-                print(f"   ⚪ エッジ不足 ({signal.edge:.1%} < {self.config.min_edge:.0%})")
+            if abs(signal.edge) < self.config.min_edge:
+                print(f"   ⚪ エッジ不足 ({signal.edge:.1%}, 閾値: ±{self.config.min_edge:.0%})")
                 return
             
             if adjusted_confidence < self.config.min_confidence:
