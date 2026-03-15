@@ -1,0 +1,444 @@
+"""
+Polymarket Client Wrapper
+py-clob-client をラップしたシンプルなインターフェース
+"""
+import os
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Any
+from decimal import Decimal
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# py-clob-client
+try:
+    from py_clob_client.client import ClobClient
+    from py_clob_client.clob_types import (
+        OrderArgs,
+        MarketOrderArgs,
+        OrderType,
+        BookParams,
+    )
+    from py_clob_client.order_builder.constants import BUY, SELL
+    CLOB_AVAILABLE = True
+except ImportError:
+    CLOB_AVAILABLE = False
+    print("Warning: py-clob-client not installed. Run: pip install py-clob-client")
+
+
+# Constants
+HOST = "https://clob.polymarket.com"
+GAMMA_API = "https://gamma-api.polymarket.com"
+
+
+@dataclass
+class Market:
+    """マーケット情報"""
+    id: str
+    question: str
+    description: str
+    outcomes: List[str]
+    tokens: List[Dict[str, Any]]
+    end_date: Optional[str] = None
+    volume: float = 0
+    liquidity: float = 0
+    
+    @property
+    def yes_token_id(self) -> Optional[str]:
+        """YESトークンID"""
+        for t in self.tokens:
+            if t.get("outcome") == "Yes":
+                return t.get("token_id")
+        return self.tokens[0].get("token_id") if self.tokens else None
+    
+    @property
+    def no_token_id(self) -> Optional[str]:
+        """NOトークンID"""
+        for t in self.tokens:
+            if t.get("outcome") == "No":
+                return t.get("token_id")
+        return self.tokens[1].get("token_id") if len(self.tokens) > 1 else None
+
+
+@dataclass
+class OrderBook:
+    """オーダーブック"""
+    token_id: str
+    bids: List[Dict[str, Any]]  # 買い注文
+    asks: List[Dict[str, Any]]  # 売り注文
+    
+    @property
+    def best_bid(self) -> Optional[float]:
+        """最良買い気配"""
+        if self.bids:
+            return float(self.bids[0].get("price", 0))
+        return None
+    
+    @property
+    def best_ask(self) -> Optional[float]:
+        """最良売り気配"""
+        if self.asks:
+            return float(self.asks[0].get("price", 0))
+        return None
+    
+    @property
+    def spread(self) -> Optional[float]:
+        """スプレッド"""
+        if self.best_bid and self.best_ask:
+            return self.best_ask - self.best_bid
+        return None
+
+
+@dataclass
+class Position:
+    """ポジション"""
+    market_id: str
+    token_id: str
+    outcome: str
+    size: float
+    avg_price: float
+    current_price: float
+    
+    @property
+    def pnl(self) -> float:
+        """損益"""
+        return (self.current_price - self.avg_price) * self.size
+    
+    @property
+    def pnl_pct(self) -> float:
+        """損益率"""
+        if self.avg_price > 0:
+            return (self.current_price - self.avg_price) / self.avg_price * 100
+        return 0
+
+
+@dataclass
+class TradeResult:
+    """取引結果"""
+    success: bool
+    order_id: Optional[str] = None
+    message: str = ""
+
+
+class PolyClient:
+    """Polymarket クライアント"""
+    
+    def __init__(
+        self,
+        private_key: str = None,
+        funder: str = None,
+        signature_type: int = 0,
+        chain_id: int = 137,
+    ):
+        """
+        Polymarket クライアント初期化
+        
+        Args:
+            private_key: ウォレットの秘密鍵
+            funder: 資金を保持するアドレス (proxy wallet使用時)
+            signature_type: 0=EOA, 1=Magic, 2=Browser proxy
+            chain_id: Polygon chain ID (137)
+        """
+        if not CLOB_AVAILABLE:
+            raise RuntimeError("py-clob-client not installed")
+        
+        self.private_key = private_key or os.getenv("POLY_PRIVATE_KEY")
+        self.funder = funder or os.getenv("POLY_FUNDER_ADDRESS")
+        self.signature_type = signature_type or int(os.getenv("POLY_SIGNATURE_TYPE", "0"))
+        self.chain_id = chain_id or int(os.getenv("POLY_CHAIN_ID", "137"))
+        
+        self._client = None
+        self._authenticated = False
+    
+    def connect(self, read_only: bool = False) -> bool:
+        """
+        Polymarket に接続
+        
+        Args:
+            read_only: 読み取り専用モード (認証不要)
+        """
+        try:
+            if read_only or not self.private_key:
+                # 読み取り専用
+                self._client = ClobClient(HOST)
+                print("📊 Polymarket接続 (読み取り専用)")
+                return True
+            
+            # 認証付き接続
+            self._client = ClobClient(
+                HOST,
+                key=self.private_key,
+                chain_id=self.chain_id,
+                signature_type=self.signature_type,
+                funder=self.funder,
+            )
+            
+            # API認証情報を設定
+            self._client.set_api_creds(self._client.create_or_derive_api_creds())
+            self._authenticated = True
+            
+            print("✅ Polymarket接続成功 (認証済み)")
+            return True
+            
+        except Exception as e:
+            print(f"❌ 接続エラー: {e}")
+            return False
+    
+    # ========== マーケットデータ ==========
+    
+    def get_markets(self, limit: int = 100, active: bool = True) -> List[Market]:
+        """
+        マーケット一覧を取得
+        
+        Note: Gamma API経由でマーケット情報を取得
+        """
+        import httpx
+        
+        params = {"limit": limit, "active": str(active).lower()}
+        
+        try:
+            resp = httpx.get(f"{GAMMA_API}/markets", params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            markets = []
+            for m in data:
+                markets.append(Market(
+                    id=m.get("condition_id", ""),
+                    question=m.get("question", ""),
+                    description=m.get("description", ""),
+                    outcomes=m.get("outcomes", []),
+                    tokens=m.get("tokens", []),
+                    end_date=m.get("end_date_iso"),
+                    volume=float(m.get("volume", 0) or 0),
+                    liquidity=float(m.get("liquidity", 0) or 0),
+                ))
+            
+            return markets
+            
+        except Exception as e:
+            print(f"マーケット取得エラー: {e}")
+            return []
+    
+    def search_markets(self, query: str, limit: int = 20) -> List[Market]:
+        """マーケットを検索"""
+        import httpx
+        
+        try:
+            resp = httpx.get(
+                f"{GAMMA_API}/markets",
+                params={"_q": query, "limit": limit, "active": "true"}
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            
+            markets = []
+            for m in data:
+                markets.append(Market(
+                    id=m.get("condition_id", ""),
+                    question=m.get("question", ""),
+                    description=m.get("description", ""),
+                    outcomes=m.get("outcomes", []),
+                    tokens=m.get("tokens", []),
+                    volume=float(m.get("volume", 0) or 0),
+                ))
+            
+            return markets
+            
+        except Exception as e:
+            print(f"検索エラー: {e}")
+            return []
+    
+    def get_price(self, token_id: str, side: str = "BUY") -> Optional[float]:
+        """トークンの現在価格を取得"""
+        if not self._client:
+            return None
+        
+        try:
+            price = self._client.get_price(token_id, side=side)
+            return float(price) if price else None
+        except Exception as e:
+            print(f"価格取得エラー: {e}")
+            return None
+    
+    def get_midpoint(self, token_id: str) -> Optional[float]:
+        """中間価格を取得"""
+        if not self._client:
+            return None
+        
+        try:
+            mid = self._client.get_midpoint(token_id)
+            return float(mid) if mid else None
+        except Exception as e:
+            print(f"中間価格取得エラー: {e}")
+            return None
+    
+    def get_order_book(self, token_id: str) -> Optional[OrderBook]:
+        """オーダーブックを取得"""
+        if not self._client:
+            return None
+        
+        try:
+            book = self._client.get_order_book(token_id)
+            return OrderBook(
+                token_id=token_id,
+                bids=book.bids if hasattr(book, 'bids') else [],
+                asks=book.asks if hasattr(book, 'asks') else [],
+            )
+        except Exception as e:
+            print(f"オーダーブック取得エラー: {e}")
+            return None
+    
+    # ========== 取引 ==========
+    
+    def buy(
+        self,
+        token_id: str,
+        amount: float,
+        price: float = None,
+        order_type: str = "GTC",
+    ) -> TradeResult:
+        """
+        買い注文
+        
+        Args:
+            token_id: トークンID
+            amount: 金額 (USDC)
+            price: 指値価格 (Noneの場合は成行)
+            order_type: GTC, FOK, IOC
+        """
+        return self._place_order(token_id, BUY, amount, price, order_type)
+    
+    def sell(
+        self,
+        token_id: str,
+        amount: float,
+        price: float = None,
+        order_type: str = "GTC",
+    ) -> TradeResult:
+        """
+        売り注文
+        
+        Args:
+            token_id: トークンID
+            amount: 金額 (USDC)
+            price: 指値価格 (Noneの場合は成行)
+            order_type: GTC, FOK, IOC
+        """
+        return self._place_order(token_id, SELL, amount, price, order_type)
+    
+    def _place_order(
+        self,
+        token_id: str,
+        side: str,
+        amount: float,
+        price: float = None,
+        order_type: str = "GTC",
+    ) -> TradeResult:
+        """注文を発注"""
+        if not self._authenticated:
+            return TradeResult(success=False, message="未認証")
+        
+        try:
+            ot = getattr(OrderType, order_type, OrderType.GTC)
+            
+            if price is None:
+                # 成行注文
+                order = MarketOrderArgs(
+                    token_id=token_id,
+                    amount=amount,
+                    side=side,
+                    order_type=OrderType.FOK,
+                )
+                signed = self._client.create_market_order(order)
+                resp = self._client.post_order(signed, OrderType.FOK)
+            else:
+                # 指値注文
+                # amount を size に変換 (shares = amount / price)
+                size = amount / price
+                order = OrderArgs(
+                    token_id=token_id,
+                    price=price,
+                    size=size,
+                    side=side,
+                )
+                signed = self._client.create_order(order)
+                resp = self._client.post_order(signed, ot)
+            
+            return TradeResult(
+                success=True,
+                order_id=resp.get("orderID") if isinstance(resp, dict) else str(resp),
+                message="注文成功",
+            )
+            
+        except Exception as e:
+            return TradeResult(success=False, message=str(e))
+    
+    def cancel_order(self, order_id: str) -> TradeResult:
+        """注文をキャンセル"""
+        if not self._authenticated:
+            return TradeResult(success=False, message="未認証")
+        
+        try:
+            self._client.cancel(order_id)
+            return TradeResult(success=True, message="キャンセル成功")
+        except Exception as e:
+            return TradeResult(success=False, message=str(e))
+    
+    def cancel_all(self) -> TradeResult:
+        """全注文をキャンセル"""
+        if not self._authenticated:
+            return TradeResult(success=False, message="未認証")
+        
+        try:
+            self._client.cancel_all()
+            return TradeResult(success=True, message="全キャンセル成功")
+        except Exception as e:
+            return TradeResult(success=False, message=str(e))
+    
+    # ========== ポジション ==========
+    
+    def get_positions(self) -> List[Position]:
+        """オープンポジションを取得"""
+        # Note: CLOB APIではポジション取得は別エンドポイント
+        # TODO: 実装
+        return []
+    
+    def get_orders(self) -> List[Dict[str, Any]]:
+        """オープンオーダーを取得"""
+        if not self._authenticated:
+            return []
+        
+        try:
+            return self._client.get_orders()
+        except Exception as e:
+            print(f"注文取得エラー: {e}")
+            return []
+
+
+# テスト用
+def _test():
+    client = PolyClient()
+    
+    # 読み取り専用で接続
+    if not client.connect(read_only=True):
+        print("接続失敗")
+        return
+    
+    # マーケット検索
+    print("\n🔍 'Trump' で検索...")
+    markets = client.search_markets("Trump", limit=5)
+    
+    for m in markets:
+        print(f"\n📊 {m.question[:60]}...")
+        print(f"   Volume: ${m.volume:,.0f}")
+        
+        if m.yes_token_id:
+            price = client.get_midpoint(m.yes_token_id)
+            if price:
+                print(f"   YES価格: {price:.2%}")
+
+
+if __name__ == "__main__":
+    _test()

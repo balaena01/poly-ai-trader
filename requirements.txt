@@ -1,0 +1,16 @@
+# Poly AI Trader - Dependencies
+
+# Polymarket Official SDK
+py-clob-client>=0.1.0
+
+# HTTP Client
+httpx>=0.25.0
+
+# Data Processing
+pandas>=2.0.0
+
+# Environment
+python-dotenv>=1.0.0
+
+# Web3 (Polygon)
+web3>=6.0.0
