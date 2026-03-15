@@ -382,11 +382,11 @@ async def _cli():
     
     elif args.list:
         print("📋 アクティブファクター:\n")
-        for f in manager.factors:
+        for f in manager.factors.values():
             print(f"  • {f.hypothesis.name}")
             print(f"    ID: {f.hypothesis.id}")
             print(f"    トレード数: {f.total_trades}")
-            print(f"    IC: {f.backtest_result.ic:.4f}" if f.backtest_result else "    IC: 未評価")
+            print(f"    IC: {f.ic:.4f}")
             print()
     
     elif args.stats:
