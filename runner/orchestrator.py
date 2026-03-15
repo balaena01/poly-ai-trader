@@ -88,6 +88,10 @@ class OrchestratorConfig:
     max_position_pct: float = 0.10
     max_drawdown_pct: float = 0.15
     
+    # 利確・損切り
+    take_profit_pct: float = 0.20   # 20% で利確
+    stop_loss_pct: float = -0.30    # -30% で損切り
+    
     # ニュース
     fetch_news: bool = True
     news_limit: int = 5
@@ -385,6 +389,9 @@ class Orchestrator:
                 # 解決済みマーケットをチェック
                 await self._check_resolved_markets()
                 
+                # 利確・損切りチェック
+                await self._check_position_exits(markets)
+                
                 # 期限切れトリガーをクリーンアップ
                 await self._cleanup_expired_triggers()
                 
@@ -612,6 +619,72 @@ class Orchestrator:
                     
         except Exception as e:
             pass  # 静かに失敗
+    
+    async def _check_position_exits(self, markets: List):
+        """利確・損切りをチェック"""
+        open_positions = self.position_tracker.get_open_positions()
+        
+        if not open_positions:
+            return
+        
+        # 現在価格を収集
+        current_prices = {}
+        for market in markets:
+            market_id = getattr(market, 'condition_id', None)
+            yes_price = getattr(market, 'yes_price', None)
+            if market_id and yes_price:
+                current_prices[market_id] = yes_price
+        
+        # 利確・損切りチェック
+        exit_signals = self.position_tracker.check_exit_conditions(
+            current_prices=current_prices,
+            take_profit_pct=self.config.take_profit_pct,
+            stop_loss_pct=self.config.stop_loss_pct,
+        )
+        
+        for exit_signal in exit_signals:
+            pos = exit_signal["position"]
+            action = exit_signal["action"]
+            reason = exit_signal["reason"]
+            pnl_pct = exit_signal["pnl_pct"]
+            
+            emoji = "💰" if reason == "take_profit" else "🛑"
+            reason_jp = "利確" if reason == "take_profit" else "損切り"
+            
+            print(f"\n{emoji} {reason_jp}シグナル!")
+            print(f"   {pos.question[:40]}")
+            print(f"   含み損益: {pnl_pct:+.1%}")
+            
+            # 売却実行
+            yes_price = current_prices.get(pos.market_id, 0.5)
+            
+            try:
+                result = await self.executor.execute_order(
+                    market_id=pos.market_id,
+                    token_id=pos.token_id,
+                    side=action,
+                    size=pos.size,
+                    price=yes_price if "YES" in action else (1 - yes_price),
+                )
+                
+                if result.success:
+                    realized_pnl = pos.calculate_unrealized_pnl(yes_price)
+                    self.position_tracker.close_position(
+                        position_id=pos.id,
+                        exit_price=yes_price,
+                        realized_pnl=realized_pnl,
+                    )
+                    
+                    # RiskManager からオープンポジション削除
+                    if pos.market_id in self.risk_manager.open_positions:
+                        del self.risk_manager.open_positions[pos.market_id]
+                    
+                    print(f"   ✅ {reason_jp}完了: ${realized_pnl:+.2f}")
+                else:
+                    print(f"   ❌ {reason_jp}失敗: {result.message}")
+                    
+            except Exception as e:
+                print(f"   ❌ エラー: {e}")
     
     def _get_analysis_interval(self, markets: List) -> int:
         """分析間隔を決定 (分)"""

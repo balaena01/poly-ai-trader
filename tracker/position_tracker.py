@@ -26,7 +26,7 @@ class Position:
     market_id: str
     token_id: str
     question: str
-    side: str  # "buy_yes", "buy_no"
+    side: str  # "buy_yes", "buy_no", "BUY_YES", "BUY_NO"
     entry_price: float
     size: float  # USDC
     
@@ -37,6 +37,34 @@ class Position:
     exit_price: Optional[float] = None
     resolved_at: Optional[datetime] = None
     pnl: float = 0.0
+    
+    def calculate_unrealized_pnl(self, current_yes_price: float) -> float:
+        """含み損益を計算 (YES価格ベース)"""
+        if self.status != PositionStatus.OPEN:
+            return self.pnl
+        
+        # 現在価格でポジションを売った場合の損益
+        side_upper = self.side.upper()
+        
+        if side_upper == "BUY_YES":
+            # YES を買った → 現在の YES 価格で売る
+            current_value = current_yes_price * self.size / self.entry_price
+            unrealized = current_value - self.size
+        else:  # BUY_NO
+            # NO を買った → 現在の NO 価格 (1 - YES) で売る
+            current_no_price = 1 - current_yes_price
+            entry_no_price = 1 - self.entry_price  # entry_price は YES 価格
+            current_value = current_no_price * self.size / entry_no_price
+            unrealized = current_value - self.size
+        
+        return unrealized
+    
+    def get_unrealized_pnl_pct(self, current_yes_price: float) -> float:
+        """含み損益 (%)"""
+        if self.size == 0:
+            return 0.0
+        unrealized = self.calculate_unrealized_pnl(current_yes_price)
+        return unrealized / self.size
     
     def to_dict(self) -> Dict:
         return {
@@ -165,6 +193,71 @@ class PositionTracker:
     def get_open_positions(self) -> List[Position]:
         """オープンポジション取得"""
         return [p for p in self.positions.values() if p.status == PositionStatus.OPEN]
+    
+    def check_exit_conditions(
+        self,
+        current_prices: Dict[str, float],  # market_id -> yes_price
+        take_profit_pct: float = 0.20,     # 20% で利確
+        stop_loss_pct: float = -0.30,      # -30% で損切り
+    ) -> List[Dict]:
+        """
+        利確・損切り条件をチェック
+        
+        Returns:
+            [{"position": Position, "action": "SELL_YES"|"SELL_NO", "reason": str, "pnl_pct": float}]
+        """
+        exit_signals = []
+        
+        for pos in self.get_open_positions():
+            yes_price = current_prices.get(pos.market_id)
+            if yes_price is None:
+                continue
+            
+            pnl_pct = pos.get_unrealized_pnl_pct(yes_price)
+            
+            # 利確チェック
+            if pnl_pct >= take_profit_pct:
+                action = "SELL_YES" if pos.side.upper() == "BUY_YES" else "SELL_NO"
+                exit_signals.append({
+                    "position": pos,
+                    "action": action,
+                    "reason": "take_profit",
+                    "pnl_pct": pnl_pct,
+                })
+            
+            # 損切りチェック
+            elif pnl_pct <= stop_loss_pct:
+                action = "SELL_YES" if pos.side.upper() == "BUY_YES" else "SELL_NO"
+                exit_signals.append({
+                    "position": pos,
+                    "action": action,
+                    "reason": "stop_loss",
+                    "pnl_pct": pnl_pct,
+                })
+        
+        return exit_signals
+    
+    def close_position(
+        self,
+        position_id: str,
+        exit_price: float,
+        realized_pnl: float,
+    ) -> Optional[Position]:
+        """ポジションをクローズ (早期売却)"""
+        pos = self.positions.get(position_id)
+        if not pos or pos.status != PositionStatus.OPEN:
+            return None
+        
+        pos.status = PositionStatus.CLOSED
+        pos.exit_price = exit_price
+        pos.resolved_at = datetime.now()
+        pos.pnl = realized_pnl
+        
+        self._save()
+        
+        print(f"📤 ポジションクローズ: {pos.question[:30]}... PnL: ${realized_pnl:+.2f}")
+        
+        return pos
     
     def get_open_market_ids(self) -> List[str]:
         """オープンポジションのマーケットID"""
