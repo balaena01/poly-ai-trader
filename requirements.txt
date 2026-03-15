@@ -12,6 +12,10 @@ websockets>=11.0
 # LLM (LiteLLM - 複数プロバイダー対応)
 litellm>=1.0.0
 
+# ML
+lightgbm>=4.0.0
+numpy>=1.24.0
+
 # Data Processing
 pandas>=2.0.0
 
