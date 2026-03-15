@@ -176,11 +176,21 @@ factor/
 |---------|------|
 | 言語 | Python 3.9+ |
 | ML | LightGBM |
-| LLM | Claude (Haiku/Sonnet) via OpenRouter |
+| LLM | LiteLLM (Anthropic直接, OpenAI, Groq対応) |
 | エージェント | LangGraph (Phase 4) |
 | 価格データ | Binance WebSocket |
-| 執行 | py-clob-client / Polymarket CLI (Rust) |
-| ウォレット | Coinbase Agentic Wallet (TEE) ※検討中 |
+| 執行 | py-clob-client |
+| ウォレット | Polygon Wallet (秘密鍵) |
+
+### LLM モデル
+
+| エイリアス | モデル | 価格 |
+|-----------|--------|------|
+| `claude-opus-4.6` | claude-opus-4-6 | $5/MTok |
+| `claude-sonnet-4.6` | claude-sonnet-4-6 | $3/MTok |
+| `claude-haiku-4.5` | claude-haiku-4-5 | **$1/MTok** (デフォルト) |
+| `gpt-4o-mini` | gpt-4o-mini | $0.15/MTok |
+| `groq/llama-70b` | groq/llama-3.1-70b | 無料枠あり |
 
 ---
 

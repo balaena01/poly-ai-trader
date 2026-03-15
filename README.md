@@ -1,82 +1,68 @@
 # Poly AI Trader
 
-Polymarket 自動売買システム
+Polymarket AI 自動売買システム
 
-## セットアップ
+## 特徴
 
-### 1. 依存関係インストール
+- **Scanner**: Polymarket + Binance リアルタイム監視
+- **Analyst**: LLM + LightGBM + Orderflow の Bayesian 統合
+- **Executor**: 自動注文実行 (ドライラン対応)
+
+## クイックスタート
+
 ```bash
+# インストール
 pip install -r requirements.txt
-```
 
-### 2. 環境変数設定
-```bash
+# 環境変数設定
 cp .env.example .env
-# .env を編集して秘密鍵を設定
+# .env を編集
+
+# マーケットスキャン
+python main.py scan
+
+# LLM分析
+python main.py analyze -n 5
+
+# 取引 (ドライラン)
+python main.py trade --execute
+
+# 自動ループ (60分間隔)
+python main.py run --interval 60
 ```
 
-### 3. ウォレット準備
-- Polygon (MATIC) ウォレットが必要
-- USDC (Polygon) を入金
-- Polymarket で Token Allowance を設定
+## 環境変数
 
-## 使い方
-
-### マーケット検索
 ```bash
-# アクティブマーケット一覧
-python main.py markets
+# Polymarket
+POLY_PRIVATE_KEY=0x...
+POLY_FUNDER_ADDRESS=0x...
 
-# キーワード検索
-python main.py markets -q "Trump"
-
-# 件数指定
-python main.py markets -q "Bitcoin" -n 20
+# LLM (LiteLLM 自動読み込み)
+ANTHROPIC_API_KEY=sk-ant-api03-xxx
+# または
+OPENAI_API_KEY=sk-xxx
+GROQ_API_KEY=gsk_xxx
 ```
 
-### 価格確認
+## LLM モデル
+
 ```bash
-python main.py price "Will Trump win"
+# 利用可能なモデル一覧
+python main.py models
 ```
 
-### 買い注文
+| エイリアス | モデル | 価格 |
+|-----------|--------|------|
+| `claude-haiku-4.5` | claude-haiku-4-5 | $1/MTok (デフォルト) |
+| `claude-sonnet-4.6` | claude-sonnet-4-6 | $3/MTok |
+| `claude-opus-4.6` | claude-opus-4-6 | $5/MTok |
+| `gpt-4o-mini` | gpt-4o-mini | $0.15/MTok |
+| `groq/llama-70b` | Llama 3.1 70B | 無料枠あり |
+
 ```bash
-# 指値 (50%で$10分)
-python main.py buy <token_id> 10 -p 0.50 --confirm
-
-# 成行
-python main.py buy <token_id> 10 --confirm
-```
-
-### 売り注文
-```bash
-python main.py sell <token_id> 10 -p 0.60 --confirm
-```
-
-## Pythonから使う
-
-```python
-from client import PolyClient
-
-# 読み取り専用
-client = PolyClient()
-client.connect(read_only=True)
-
-# マーケット検索
-markets = client.search_markets("Trump", limit=5)
-for m in markets:
-    print(f"{m.question}: YES={client.get_midpoint(m.yes_token_id):.1%}")
-
-# 認証付き (取引する場合)
-client = PolyClient(
-    private_key="0x...",
-    funder="0x...",
-)
-client.connect()
-
-# 買い注文
-result = client.buy(token_id="xxx", amount=10, price=0.50)
-print(result)
+# モデル指定
+python main.py analyze -m claude-sonnet-4.6 -n 3
 ```
 
 ## アーキテクチャ
@@ -84,41 +70,51 @@ print(result)
 ```
 poly-ai-trader/
 ├── client/
-│   ├── __init__.py
-│   └── polymarket.py    # Polymarket API クライアント
-├── strategies/          # 売買戦略 (TODO)
-├── main.py              # CLI エントリーポイント
-├── requirements.txt
-└── .env.example
+│   └── polymarket.py       # Polymarket API
+├── scanner/
+│   └── market_scanner.py   # Binance + Polymarket 監視
+├── analyst/
+│   ├── llm_analyst.py      # LLM (LiteLLM)
+│   ├── ml_analyst.py       # LightGBM
+│   ├── orderflow.py        # クジラ/流動性検出
+│   ├── bayesian.py         # Bayesian統合
+│   ├── ensemble.py         # 全シグナル統合
+│   └── features.py         # 30特徴量
+├── executor/
+│   └── trade_executor.py   # 注文実行
+├── models/                 # 学習済みモデル
+├── docs/
+│   └── ROADMAP.md          # 開発計画
+└── main.py                 # CLI
 ```
 
-## 必要なもの
+## シグナル統合 (Bayesian)
 
-1. **Polygonウォレット**
-   - MetaMask等で作成
-   - 秘密鍵をエクスポート
-
-2. **USDC (Polygon)**
-   - 取引所からPolygonネットワークで送金
-   - または Bridge で変換
-
-3. **Token Allowance**
-   - Polymarket サイトで初回設定必要
-   - https://polymarket.com
-
-## 注意事項
-
-- **秘密鍵の管理**: .env に保存し、.gitignore に追加
-- **リスク**: 予測市場は投機的。余剰資金で
-- **規制**: 地域によっては利用制限あり
+```
+Market:     53% UP
+LLM:        64%
+LightGBM:   69%
+Orderflow:  72%
+    ↓
+Posterior:  81%
+Final:      76.9%
+Edge:       +23.9%
+```
 
 ## 開発ロードマップ
 
-詳細は [docs/ROADMAP.md](docs/ROADMAP.md) を参照
+詳細: [docs/ROADMAP.md](docs/ROADMAP.md)
 
 | Phase | 内容 | 状態 |
 |-------|------|------|
-| 1 | Scanner + Analyst + Executor | ✅ 完了 |
-| 2 | LightGBM + Orderflow + Bayesian | 🔜 次 |
-| 3 | Risk Manager + Auditor | 予定 |
+| 1 | Scanner + Analyst + Executor | ✅ |
+| 2 | LightGBM + Orderflow + Bayesian | ✅ |
+| 3 | Risk Manager + Auditor | 🔜 |
 | 4 | Factor Miner + Auto-learning | 予定 |
+
+## 注意事項
+
+- **秘密鍵の管理**: `.env` に保存、`.gitignore` に追加済み
+- **リスク**: 予測市場は投機的。余剰資金で
+- **規制**: 地域によっては利用制限あり
+- **ドライラン**: デフォルトで有効。`--live` で本番実行
