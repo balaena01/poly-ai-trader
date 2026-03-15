@@ -110,10 +110,12 @@ class Orchestrator:
         
         # コンポーネント
         self.scanner = MarketScanner()
+        # TODO: ML/Orderflow は価格履歴・取引履歴が必要
+        # 現状は LLM のみで予測
         self.analyst = EnsembleAnalyst(
             llm_model=self.config.llm_model,
-            use_ml=True,
-            use_orderflow=True,
+            use_ml=False,       # 学習済みモデルがない
+            use_orderflow=False, # 取引履歴がない
         )
         self.executor = TradeExecutor(
             dry_run=(self.config.mode == RunMode.DRY_RUN)
