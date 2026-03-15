@@ -184,7 +184,7 @@ class NewsFetcher:
             else:
                 return Fetcher.fetch(url)
         
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         with concurrent.futures.ThreadPoolExecutor() as pool:
             page = await loop.run_in_executor(pool, fetch_sync)
         

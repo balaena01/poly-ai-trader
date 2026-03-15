@@ -116,7 +116,7 @@ async def cmd_run(args):
         max_markets=args.limit,
         max_trades_per_cycle=args.max_trades,
         fetch_news=not args.no_news,
-        dashboard=args.dashboard,
+        dashboard=not args.no_dashboard,
         dashboard_port=args.dashboard_port,
         enable_exit=args.enable_exit,
         take_profit_pct=args.take_profit,
@@ -160,7 +160,9 @@ def main():
   python main.py analyze -n 5            # 5マーケットを分析
   python main.py trade --execute         # 取引実行 (ドライラン)
   python main.py trade --execute --live  # 本番取引
-  python main.py run --interval 60       # 自動売買ループ
+  python main.py run                     # 自動売買 (ドライラン + ダッシュボード)
+  python main.py run --live              # 本番自動売買
+  python main.py run --no-dashboard      # ダッシュボードなし
         """,
     )
     subparsers = parser.add_subparsers(dest="command", help="コマンド")
@@ -191,7 +193,7 @@ def main():
     p_run.add_argument("--min-edge", type=float, default=0.10, help="最小エッジ")
     p_run.add_argument("--max-trades", type=int, default=3, help="最大取引数/サイクル")
     p_run.add_argument("--no-news", action="store_true", help="ニュース取得を無効化")
-    p_run.add_argument("--dashboard", action="store_true", help="ダッシュボード有効化")
+    p_run.add_argument("--no-dashboard", action="store_true", help="ダッシュボードを無効化")
     p_run.add_argument("--dashboard-port", type=int, default=8080, help="ダッシュボードポート")
     p_run.add_argument("--dry-run", action="store_true", default=True, help="ドライラン")
     p_run.add_argument("--live", action="store_true", help="本番実行")

@@ -241,7 +241,7 @@ data_fetcher/
 **リアルタイム Web UI** (Cyberpunk × Bloomberg Terminal)
 
 ```bash
-python main.py run --dashboard --dry-run
+python main.py run
 # → http://localhost:8080
 ```
 

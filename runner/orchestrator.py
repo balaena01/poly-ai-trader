@@ -138,7 +138,11 @@ class Orchestrator:
         
         # 取引履歴キャッシュ (Orderflow用)
         self.trade_cache: Dict[str, List] = {}
-        
+
+        # BTC/ETH価格キャッシュ (スキャン時に更新)
+        self._btc_price: Optional[float] = None
+        self._eth_price: Optional[float] = None
+
         # ダッシュボード
         self.dashboard = None
         if self.config.dashboard and DASHBOARD_AVAILABLE:
@@ -257,10 +261,16 @@ class Orchestrator:
         """マーケットスキャン"""
         print("🔍 マーケットスキャン中...")
         result = await self.scanner.scan()
-        
+
+        # BTC/ETH価格をキャッシュ
+        if result.btc_price:
+            self._btc_price = result.btc_price.price
+        if result.eth_price:
+            self._eth_price = result.eth_price.price
+
         markets = result.markets[:self.config.max_markets]
         print(f"   {len(markets)} マーケット検出")
-        
+
         return markets
     
     # ========== WebSocket監視 ==========
@@ -499,7 +509,7 @@ class Orchestrator:
                 market=market,
                 prices=prices,
                 trades=trades,
-                btc_price=None,  # TODO: BTC価格取得
+                btc_price=self._btc_price,
                 news_context=news_context,
             )
             
@@ -799,6 +809,11 @@ async def run_orchestrator(
     min_edge: float = 0.10,
     max_markets: int = 10,
     fetch_news: bool = True,
+    dashboard: bool = True,
+    dashboard_port: int = 8080,
+    enable_exit: bool = False,
+    take_profit_pct: float = 0.50,
+    stop_loss_pct: float = -0.50,
 ):
     """オーケストレーター実行"""
     config = OrchestratorConfig(
@@ -807,7 +822,12 @@ async def run_orchestrator(
         min_edge=min_edge,
         max_markets=max_markets,
         fetch_news=fetch_news,
+        dashboard=dashboard,
+        dashboard_port=dashboard_port,
+        enable_exit=enable_exit,
+        take_profit_pct=take_profit_pct,
+        stop_loss_pct=stop_loss_pct,
     )
-    
+
     orchestrator = Orchestrator(config)
     await orchestrator.start()

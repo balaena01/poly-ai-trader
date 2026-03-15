@@ -137,7 +137,8 @@ class RiskManager:
         """現在のドローダウン率を取得"""
         if self.peak_balance == 0:
             return 0
-    
+        return (self.peak_balance - self.current_balance) / self.peak_balance
+
     # ========== エクスポージャー管理 ==========
     
     def get_total_exposure(self) -> float:
@@ -168,7 +169,6 @@ class RiskManager:
         """トリガー発火時: ペンディング → オープンポジションに変換"""
         self.remove_pending_exposure(amount)
         self.open_positions[market_id] = {"symbol": symbol, "amount": amount}
-        return (self.peak_balance - self.current_balance) / self.peak_balance
     
     # ========== Kelly サイジング ==========
     

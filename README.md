@@ -81,17 +81,20 @@ python main.py scan
 # LLM分析
 python main.py analyze -n 5
 
-# 自動売買 (ドライラン + ダッシュボード)
-python main.py run --dashboard --dry-run
+# 自動売買 (ドライラン、ダッシュボード自動起動)
+python main.py run
 
 # 自動売買 (本番)
-python main.py run --dashboard --live
+python main.py run --live
+
+# ダッシュボードなし
+python main.py run --no-dashboard
 ```
 
 ## ダッシュボード
 
 ```bash
-python main.py run --dashboard --dry-run
+python main.py run
 # → http://localhost:8080
 ```
 

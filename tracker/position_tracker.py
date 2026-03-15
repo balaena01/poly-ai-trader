@@ -264,8 +264,11 @@ class PositionTracker:
         return list(set(p.market_id for p in self.get_open_positions()))
     
     def get_total_pnl(self) -> float:
-        """総PnL"""
-        return sum(p.pnl for p in self.positions.values() if p.status == PositionStatus.RESOLVED)
+        """総PnL (解決済み + 早期クローズ)"""
+        return sum(
+            p.pnl for p in self.positions.values()
+            if p.status in (PositionStatus.RESOLVED, PositionStatus.CLOSED)
+        )
     
     def get_total_exposure(self) -> float:
         """総エクスポージャー (オープンポジション)"""
@@ -273,18 +276,21 @@ class PositionTracker:
     
     def get_stats(self) -> Dict:
         """統計"""
-        resolved = [p for p in self.positions.values() if p.status == PositionStatus.RESOLVED]
-        
-        wins = sum(1 for p in resolved if p.pnl > 0)
-        losses = sum(1 for p in resolved if p.pnl < 0)
-        
+        closed = [
+            p for p in self.positions.values()
+            if p.status in (PositionStatus.RESOLVED, PositionStatus.CLOSED)
+        ]
+
+        wins = sum(1 for p in closed if p.pnl > 0)
+        losses = sum(1 for p in closed if p.pnl < 0)
+
         return {
             "total_positions": len(self.positions),
             "open": len(self.get_open_positions()),
-            "resolved": len(resolved),
+            "resolved": len(closed),
             "wins": wins,
             "losses": losses,
-            "win_rate": wins / len(resolved) if resolved else 0,
+            "win_rate": wins / len(closed) if closed else 0,
             "total_pnl": self.get_total_pnl(),
             "total_exposure": self.get_total_exposure(),
         }
