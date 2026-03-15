@@ -326,7 +326,7 @@ class FactorBacktester:
 # CLI
 if __name__ == "__main__":
     import argparse
-    from miner import FactorHypothesis, FactorType, FactorMiner
+    from .miner import FactorHypothesis, FactorType, FactorMiner
     
     parser = argparse.ArgumentParser(description="Factor Backtester")
     parser.add_argument("--market", help="マーケット質問 (LLMで仮説生成)")
