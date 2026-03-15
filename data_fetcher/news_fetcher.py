@@ -84,36 +84,36 @@ class NewsFetcher:
         "decrypt": {
             "url": "https://decrypt.co/news",
             "selectors": {
-                "articles": "article",
-                "title": "h3",
-                "link": "a",
-                "summary": "p",
+                "articles": "[class*='PostCard'], [class*='post-card'], article[class*='post']",
+                "title": "h3, h2, [class*='title']",
+                "link": "a[href*='/news/'], a[href*='/article/']",
+                "summary": "p, [class*='excerpt'], [class*='summary']",
             }
         },
         "coindesk": {
-            "url": "https://www.coindesk.com/tag/bitcoin",
+            "url": "https://www.coindesk.com/latest-crypto-news",
             "selectors": {
-                "articles": "article",
-                "title": "h4, h3",
-                "link": "a",
-                "summary": "p",
+                "articles": "[class*='article'], [class*='card'], [class*='story']",
+                "title": "h2, h3, h4, [class*='headline']",
+                "link": "a[href*='/20']",
+                "summary": "p, [class*='excerpt']",
             }
         },
         "cointelegraph": {
             "url": "https://cointelegraph.com/tags/bitcoin",
             "selectors": {
-                "articles": "article",
-                "title": "h2, h3",
-                "link": "a",
-                "summary": "p",
+                "articles": "[class*='post'], article",
+                "title": "h2, h3, [class*='title']",
+                "link": "a[href*='/news/']",
+                "summary": "p, [class*='lead']",
             }
         },
         "theblock": {
             "url": "https://www.theblock.co/latest",
             "selectors": {
-                "articles": "article",
-                "title": "h2, h3",
-                "link": "a",
+                "articles": "[class*='article'], [class*='story']",
+                "title": "h2, h3, [class*='headline']",
+                "link": "a[href*='/post/']",
                 "summary": "p",
             }
         },
@@ -204,10 +204,19 @@ class NewsFetcher:
                 link = link_elem.attrib.get("href", "")
                 summary = summary_elem.text.strip() if summary_elem else ""
                 
+                # スキップ条件
+                if not title or len(title) < 10:
+                    continue
+                
+                # 価格ページ等を除外
+                skip_patterns = ["/price/", "/prices/", "/market/", "/tag/", "/category/", "/author/"]
+                if any(p in link for p in skip_patterns):
+                    continue
+                
                 # 相対URL対応
                 if link and not link.startswith("http"):
-                    base = url.rsplit("/", 1)[0]
-                    link = f"{base}/{link.lstrip('/')}"
+                    from urllib.parse import urljoin
+                    link = urljoin(url, link)
                 
                 articles.append(NewsArticle(
                     title=title,
