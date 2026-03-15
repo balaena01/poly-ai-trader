@@ -326,60 +326,64 @@ class FactorBacktester:
 # CLI
 if __name__ == "__main__":
     import argparse
+    import asyncio
     from .miner import FactorHypothesis, FactorType, FactorMiner
     
-    parser = argparse.ArgumentParser(description="Factor Backtester")
-    parser.add_argument("--market", help="マーケット質問 (LLMで仮説生成)")
-    parser.add_argument("--hypothesis", help="仮説ID (既存の仮説をテスト)")
-    parser.add_argument("--days", type=int, default=30, help="バックテスト日数")
-    
-    args = parser.parse_args()
-    
-    print("📊 Factor Backtester\n")
-    
-    if args.market:
-        # LLMで仮説生成してバックテスト
-        print(f"🎯 マーケット: {args.market}")
-        miner = FactorMiner()
-        hypothesis = miner.generate_hypothesis(args.market)
+    async def main():
+        parser = argparse.ArgumentParser(description="Factor Backtester")
+        parser.add_argument("--market", help="マーケット質問 (LLMで仮説生成)")
+        parser.add_argument("--hypothesis", help="仮説ID (既存の仮説をテスト)")
+        parser.add_argument("--days", type=int, default=30, help="バックテスト日数")
         
-        if hypothesis:
-            print(f"\n✅ 仮説生成: {hypothesis.name}")
+        args = parser.parse_args()
+        
+        print("📊 Factor Backtester\n")
+        
+        if args.market:
+            # LLMで仮説生成してバックテスト
+            print(f"🎯 マーケット: {args.market}")
+            miner = FactorMiner()
+            hypothesis = await miner.generate_hypothesis(args.market)
+            
+            if hypothesis:
+                print(f"\n✅ 仮説生成: {hypothesis.name}")
+                backtester = FactorBacktester()
+                result = backtester.backtest(hypothesis)
+                
+                print("\n📈 バックテスト結果:")
+                print(f"  IC:           {result.ic:.4f}")
+                print(f"  Sharpe:       {result.sharpe:.2f}")
+                print(f"  Win Rate:     {result.win_rate:.1%}")
+                print(f"  Total Trades: {result.total_trades}")
+                print(f"  Total PnL:    ${result.total_pnl:.2f}")
+                print(f"  Max Drawdown: {result.max_drawdown:.1%}")
+                
+                if result.ic > 0.05:
+                    print(f"\n🟢 IC > 0.05 → ファクター採用可能")
+                else:
+                    print(f"\n🔴 IC < 0.05 → ファクター不採用")
+            else:
+                print("❌ 仮説生成失敗")
+        
+        else:
+            # デモ
+            print("📝 デモ仮説でバックテスト\n")
+            
+            hypothesis = FactorHypothesis(
+                id="demo001",
+                name="Momentum Breakout",
+                description="価格が上昇モメンタムを示したらロング",
+                type=FactorType.MOMENTUM,
+                entry_condition="5分モメンタム > 1%",
+                exit_condition="利確5%, 損切3%",
+                parameters={"take_profit": 0.05, "stop_loss": -0.03},
+            )
+            
             backtester = FactorBacktester()
             result = backtester.backtest(hypothesis)
             
-            print("\n📈 バックテスト結果:")
-            print(f"  IC:           {result.ic:.4f}")
-            print(f"  Sharpe:       {result.sharpe:.2f}")
-            print(f"  Win Rate:     {result.win_rate:.1%}")
-            print(f"  Total Trades: {result.total_trades}")
-            print(f"  Total PnL:    ${result.total_pnl:.2f}")
-            print(f"  Max Drawdown: {result.max_drawdown:.1%}")
-            
-            if result.ic > 0.05:
-                print(f"\n🟢 IC > 0.05 → ファクター採用可能")
-            else:
-                print(f"\n🔴 IC < 0.05 → ファクター不採用")
-        else:
-            print("❌ 仮説生成失敗")
+            print("📈 バックテスト結果:")
+            for k, v in result.to_dict().items():
+                print(f"  {k:15}: {v}")
     
-    else:
-        # デモ
-        print("📝 デモ仮説でバックテスト\n")
-        
-        hypothesis = FactorHypothesis(
-            id="demo001",
-            name="Momentum Breakout",
-            description="価格が上昇モメンタムを示したらロング",
-            type=FactorType.MOMENTUM,
-            entry_condition="5分モメンタム > 1%",
-            exit_condition="利確5%, 損切3%",
-            parameters={"take_profit": 0.05, "stop_loss": -0.03},
-        )
-        
-        backtester = FactorBacktester()
-        result = backtester.backtest(hypothesis)
-        
-        print("📈 バックテスト結果:")
-        for k, v in result.to_dict().items():
-            print(f"  {k:15}: {v}")
+    asyncio.run(main())
