@@ -414,6 +414,34 @@ class PolyClient:
         # TODO: 実装
         return []
     
+    def get_balance(self) -> float:
+        """USDC残高を取得 (Polygon)"""
+        if not self._funder_address:
+            return 0.0
+        
+        try:
+            from web3 import Web3
+            
+            # Polygon RPC
+            w3 = Web3(Web3.HTTPProvider("https://polygon-rpc.com"))
+            
+            # USDC on Polygon
+            usdc_address = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+            
+            # ERC20 ABI (balanceOf only)
+            abi = [{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}]
+            
+            contract = w3.eth.contract(address=Web3.to_checksum_address(usdc_address), abi=abi)
+            balance_wei = contract.functions.balanceOf(Web3.to_checksum_address(self._funder_address)).call()
+            
+            # USDC is 6 decimals
+            balance = balance_wei / 10**6
+            return balance
+            
+        except Exception as e:
+            print(f"残高取得エラー: {e}")
+            return 0.0
+    
     def get_orders(self) -> List[Dict[str, Any]]:
         """オープンオーダーを取得"""
         if not self._authenticated:

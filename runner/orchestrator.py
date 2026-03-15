@@ -157,6 +157,18 @@ class Orchestrator:
         print("\nCtrl+C で停止\n")
         
         try:
+            # 残高取得
+            from client import PolyClient
+            try:
+                poly_client = PolyClient()
+                poly_client.connect(read_only=True)
+                balance = poly_client.get_balance()
+                print(f"💰 残高: ${balance:.2f} USDC")
+                if self.dashboard:
+                    await self.dashboard.update_state("balance", balance)
+            except Exception as e:
+                print(f"⚠️ 残高取得失敗: {e}")
+            
             # 初回スキャン
             markets = await self._scan_markets()
             
