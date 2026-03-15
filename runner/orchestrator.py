@@ -110,12 +110,11 @@ class Orchestrator:
         
         # コンポーネント
         self.scanner = MarketScanner()
-        # TODO: ML/Orderflow は価格履歴・取引履歴が必要
-        # 現状は LLM のみで予測
+        # Ensemble Analyst (ML はモデル学習後に有効化)
         self.analyst = EnsembleAnalyst(
             llm_model=self.config.llm_model,
-            use_ml=False,       # 学習済みモデルがない
-            use_orderflow=False, # 取引履歴がない
+            use_ml=False,        # TODO: モデル学習後に有効化
+            use_orderflow=True,  # WebSocket から取引データ収集
         )
         self.executor = TradeExecutor(
             dry_run=(self.config.mode == RunMode.DRY_RUN)
@@ -124,8 +123,15 @@ class Orchestrator:
         self.auditor = Auditor()
         self.factor_manager = FactorManager()
         self.position_tracker = PositionTracker()
+        
+        # Price History Fetcher
+        self.price_fetcher = PriceHistoryFetcher()
+        
         # Google News RSS (高速・安定)
         self.news_fetcher = GoogleNewsFetcher()
+        
+        # 取引履歴キャッシュ (Orderflow用)
+        self.trade_cache: Dict[str, List] = {}
         
         # ダッシュボード
         self.dashboard = None
@@ -276,7 +282,28 @@ class Orchestrator:
         async def on_price(update):
             await self._check_triggers(update.asset_id, update.price)
         
+        # 取引コールバック (Orderflow用)
+        async def on_trade(update):
+            token_id = update.asset_id
+            if token_id not in self.trade_cache:
+                self.trade_cache[token_id] = []
+            
+            # Trade オブジェクトを作成
+            from analyst.orderflow import Trade
+            trade = Trade(
+                timestamp=update.timestamp,
+                price=update.price,
+                size=update.size,
+                side=update.side,
+            )
+            self.trade_cache[token_id].append(trade)
+            
+            # 最新1000件のみ保持
+            if len(self.trade_cache[token_id]) > 1000:
+                self.trade_cache[token_id] = self.trade_cache[token_id][-1000:]
+        
         self.websocket.on_price(on_price)
+        self.websocket.on_trade(on_trade)
         
         # 接続
         try:
@@ -444,10 +471,29 @@ class Orchestrator:
                     ])
                     print(f"   📰 ニュース: {len(articles)}件")
             
+            # 価格履歴取得 (Orderflow/ML用)
+            prices = []
+            trades = []
+            if token_id:
+                try:
+                    price_points = await self.price_fetcher.fetch_prices(
+                        token_id=token_id,
+                        interval="1d",  # 直近1日
+                        fidelity=5,     # 5分足
+                    )
+                    prices = [p.price for p in price_points[-100:]]  # 最新100点
+                    
+                    # 取引履歴 (WebSocketから収集済みのもの)
+                    trades = self.trade_cache.get(token_id, [])
+                except Exception as e:
+                    pass  # 価格取得失敗は無視
+            
             # 分析
             signal = await self.analyst.analyze(
                 market=market,
-                btc_price=None,  # TODO: 価格取得
+                prices=prices,
+                trades=trades,
+                btc_price=None,  # TODO: BTC価格取得
                 news_context=news_context,
             )
             
