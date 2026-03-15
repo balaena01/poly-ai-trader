@@ -112,10 +112,13 @@ poly-ai-trader/
 - **リスク**: 予測市場は投機的。余剰資金で
 - **規制**: 地域によっては利用制限あり
 
-## 今後の予定
+## 開発ロードマップ
 
-- [ ] 戦略エンジン (AI分析)
-- [ ] バックテスト機能
-- [ ] 自動売買ループ
-- [ ] Discord通知
-- [ ] ダッシュボード
+詳細は [docs/ROADMAP.md](docs/ROADMAP.md) を参照
+
+| Phase | 内容 | 状態 |
+|-------|------|------|
+| 1 | Scanner + Analyst + Executor | ✅ 完了 |
+| 2 | LightGBM + Orderflow + Bayesian | 🔜 次 |
+| 3 | Risk Manager + Auditor | 予定 |
+| 4 | Factor Miner + Auto-learning | 予定 |
