@@ -56,7 +56,7 @@ class TriggerCondition:
 class OrchestratorConfig:
     """設定"""
     # 分析
-    llm_model: str = "claude-haiku-4-5-20251001-20251001"
+    llm_model: str = "claude-haiku-4-5-20251001"
     min_edge: float = 0.10
     min_confidence: float = 0.60
     max_markets: int = 10
@@ -333,7 +333,7 @@ class Orchestrator:
             
             self.stats["signals_generated"] += 1
             
-            print(f"   予測: {signal.predicted_prob:.1%} | エッジ: {signal.edge:+.1%}")
+            print(f"   予測: {signal.final_probability:.1%} | エッジ: {signal.edge:+.1%}")
             
             # Auditorチェック
             audit_result = self.auditor.check(signal, market)
@@ -377,7 +377,7 @@ class Orchestrator:
         question = getattr(market, 'question', str(market))
         
         # 目標価格 (現在価格から少し有利な位置)
-        current_price = signal.market_price
+        current_price = getattr(market, 'yes_price', 0.5)
         if signal.action.value == "BUY":
             target_price = current_price * 0.98  # 2%下で買い
         else:
@@ -447,7 +447,7 @@ class Orchestrator:
 # CLI用ヘルパー
 async def run_orchestrator(
     mode: str = "dry_run",
-    model: str = "claude-haiku-4-5-20251001-20251001",
+    model: str = "claude-haiku-4-5-20251001",
     min_edge: float = 0.10,
     max_markets: int = 10,
     fetch_news: bool = True,

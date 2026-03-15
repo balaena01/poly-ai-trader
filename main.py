@@ -182,7 +182,7 @@ def main():
     # run (フル統合自動売買)
     p_run = subparsers.add_parser("run", help="フル統合自動売買 (WebSocket + LLM + Risk)")
     p_run.add_argument("-n", "--limit", type=int, default=10, help="最大マーケット数")
-    p_run.add_argument("-m", "--model", default="claude-haiku-4-5-20251001-20251001", help="LLMモデル")
+    p_run.add_argument("-m", "--model", default="claude-haiku-4-5-20251001", help="LLMモデル")
     p_run.add_argument("--min-edge", type=float, default=0.10, help="最小エッジ")
     p_run.add_argument("--max-trades", type=int, default=3, help="最大取引数/サイクル")
     p_run.add_argument("--no-news", action="store_true", help="ニュース取得を無効化")

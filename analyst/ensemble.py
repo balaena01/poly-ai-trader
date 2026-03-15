@@ -63,7 +63,7 @@ class EnsembleAnalyst:
     
     def __init__(
         self,
-        llm_model: str = "claude-haiku-4-5-20251001-20251001",
+        llm_model: str = "claude-haiku-4-5-20251001",
         ml_model_path: str = None,
         use_ml: bool = True,
         use_orderflow: bool = True,
@@ -305,7 +305,7 @@ async def _test():
     
     # アンサンブル分析 (MLなし、簡易版)
     analyst = EnsembleAnalyst(
-        llm_model="claude-haiku-4-5-20251001-20251001",
+        llm_model="claude-haiku-4-5-20251001",
         use_ml=False,  # 学習済みモデルなし
         use_orderflow=False,  # 取引データなし
     )
