@@ -466,6 +466,10 @@ class Orchestrator:
                 "target_price": target_price,
                 "size": size,
             })
+        
+        # テスト用: 即時発火
+        print(f"   🚀 テスト: 即時発火!")
+        await self._execute_trigger(trigger, current_price)
     
     def _get_analysis_interval(self, markets: List) -> int:
         """分析間隔を決定 (分)"""
