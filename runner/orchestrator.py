@@ -369,7 +369,7 @@ class Orchestrator:
                 if self.dashboard:
                     stats = self.position_tracker.get_stats()
                     await self.dashboard.update_state("pnl", stats["total_pnl"])
-                    await self.dashboard.update_state("balance", stats["total_exposure"])
+                    # balance は起動時に設定済み (上書きしない)
                 
                 # 次の間隔を決定
                 interval = self._get_analysis_interval(markets)
