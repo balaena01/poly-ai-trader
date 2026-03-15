@@ -506,7 +506,8 @@ class Orchestrator:
         if existing_trigger:
             # 同じ方向なら維持
             if existing_trigger.side == signal.action.value:
-                return  # 変更なし
+                print(f"   ⏸️ トリガー維持中: {existing_trigger.side}")
+                return
             
             # 反対方向 → 古いトリガーを削除
             print(f"   🔄 予測反転: {existing_trigger.side} → {signal.action.value}")
@@ -515,7 +516,7 @@ class Orchestrator:
         
         # 目標価格 (現在価格から少し有利な位置)
         current_price = getattr(market, 'yes_price', 0.5)
-        if signal.action.value == "BUY":
+        if "BUY" in signal.action.value:
             target_price = current_price * 0.98  # 2%下で買い
         else:
             target_price = current_price * 1.02  # 2%上で売り
