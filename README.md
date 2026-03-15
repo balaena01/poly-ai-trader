@@ -109,8 +109,10 @@ Edge:       +23.9%
 |-------|------|------|
 | 1 | Scanner + Analyst + Executor | ✅ |
 | 2 | LightGBM + Orderflow + Bayesian | ✅ |
-| 3 | Risk Manager + Auditor | 🔜 |
-| 4 | Factor Miner + Auto-learning | 予定 |
+| 3 | Risk Manager + Auditor | ✅ |
+| 4 | Factor Miner + Auto-learning | ✅ |
+
+**全Phase完了！** 🎉
 
 ## 注意事項
 
