@@ -169,17 +169,24 @@ class NewsFetcher:
         config: Dict,
         limit: int,
     ) -> List[NewsArticle]:
-        """Scraplingでフェッチ"""
+        """Scraplingでフェッチ (スレッドで実行)"""
+        import concurrent.futures
+        
         url = config["url"]
         selectors = config["selectors"]
         
         print(f"🔍 {source}: {url}")
         
-        # ステルスモードでフェッチ
-        if self.use_stealth:
-            page = StealthyFetcher.fetch(url, headless=True, network_idle=True)
-        else:
-            page = Fetcher.fetch(url)
+        # 同期処理をスレッドで実行
+        def fetch_sync():
+            if self.use_stealth:
+                return StealthyFetcher.fetch(url, headless=True, network_idle=True)
+            else:
+                return Fetcher.fetch(url)
+        
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            page = await loop.run_in_executor(pool, fetch_sync)
         
         articles = []
         article_elements = page.css(selectors["articles"])
@@ -355,15 +362,20 @@ class NewsFetcher:
         """
         articles = []
         
-        # 1. Scraplingで各ソースから取得
+        # 1. Scraplingで各ソースから取得 (タイムアウト付き)
         if SCRAPLING_AVAILABLE:
             try:
-                scraped = await self.fetch_all(limit_per_source=3)
+                scraped = await asyncio.wait_for(
+                    self.fetch_all(limit_per_source=2),
+                    timeout=30.0
+                )
                 # クエリでフィルタリング
                 query_lower = query.lower()
                 for a in scraped:
                     if query_lower in a.title.lower() or query_lower in a.summary.lower():
                         articles.append(a)
+            except asyncio.TimeoutError:
+                print(f"⚠️ Scrapling タイムアウト")
             except Exception as e:
                 print(f"⚠️ Scrapling取得エラー: {e}")
         
