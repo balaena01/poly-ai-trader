@@ -327,7 +327,7 @@ class TradeExecutor:
             market_id=market_id,
             token_id=token_id,
             question=f"Market {market_id[:16]}",
-            action=Action.BUY if side.upper() == "BUY" else Action.SELL,
+            action=Action.BUY_YES if side.upper() == "BUY" else Action.SELL_YES,
             market_price=price,
             predicted_prob=price,  # ダミー
             edge=0.1,  # ダミー
