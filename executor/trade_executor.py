@@ -236,8 +236,12 @@ class TradeExecutor:
             price = signal.market_price
         elif signal.action == Action.BUY_NO:
             price = 1 - signal.market_price
+        elif signal.action == Action.SELL_YES:
+            price = signal.market_price
+        elif signal.action == Action.SELL_NO:
+            price = 1 - signal.market_price
         else:
-            price = None
+            price = signal.market_price or 0.5  # フォールバック
         
         # ドライラン
         if self.dry_run:
@@ -247,7 +251,7 @@ class TradeExecutor:
                 order_id="DRY_RUN",
                 executed_price=price,
                 executed_amount=amount,
-                message=f"[DRY RUN] {signal.action.value} ${amount:.2f} @ {price:.1%}",
+                message=f"[DRY RUN] {signal.action.value} ${amount:.2f} @ {(price or 0):.1%}",
             )
             self.history.append(result)
             
