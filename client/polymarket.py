@@ -422,8 +422,24 @@ class PolyClient:
         try:
             from web3 import Web3
             
-            # Polygon RPC
-            w3 = Web3(Web3.HTTPProvider("https://polygon-rpc.com"))
+            # Polygon RPC (public endpoints)
+            rpc_urls = [
+                "https://polygon.llamarpc.com",
+                "https://rpc.ankr.com/polygon",
+                "https://polygon.drpc.org",
+            ]
+            
+            w3 = None
+            for rpc_url in rpc_urls:
+                try:
+                    w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 5}))
+                    if w3.is_connected():
+                        break
+                except:
+                    continue
+            
+            if not w3 or not w3.is_connected():
+                return 0.0
             
             # USDC on Polygon
             usdc_address = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
