@@ -336,7 +336,13 @@ class Orchestrator:
             print(f"   予測: {signal.final_probability:.1%} | エッジ: {signal.edge:+.1%}")
             
             # Auditorチェック
-            audit_result = self.auditor.audit(signal, market)
+            audit_result = self.auditor.audit(
+                market_id=getattr(market, 'market_id', ''),
+                question=question,
+                liquidity=getattr(market, 'liquidity', 0),
+                end_date=getattr(market, 'end_date', None),
+                original_confidence=signal.confidence,
+            )
             
             if audit_result.should_block:
                 print(f"   🚫 ブロック: {audit_result.block_reason}")
