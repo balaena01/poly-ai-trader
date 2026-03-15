@@ -19,6 +19,13 @@ from executor import TradeExecutor
 from risk import RiskManager, Auditor
 from data_fetcher import PolyWebSocket, GoogleNewsFetcher, PriceHistoryFetcher
 
+# Dashboard (optional)
+try:
+    from dashboard import DashboardServer
+    DASHBOARD_AVAILABLE = True
+except ImportError:
+    DASHBOARD_AVAILABLE = False
+
 
 class RunMode(Enum):
     DRY_RUN = "dry_run"
@@ -73,6 +80,10 @@ class OrchestratorConfig:
     # ニュース
     fetch_news: bool = True
     news_limit: int = 5
+    
+    # ダッシュボード
+    dashboard: bool = False
+    dashboard_port: int = 8080
 
 
 class Orchestrator:
@@ -94,6 +105,11 @@ class Orchestrator:
         self.risk_manager = RiskManager()
         self.auditor = Auditor()
         self.news_fetcher = GoogleNewsFetcher()
+        
+        # ダッシュボード
+        self.dashboard = None
+        if self.config.dashboard and DASHBOARD_AVAILABLE:
+            self.dashboard = DashboardServer(port=self.config.dashboard_port)
         
         # WebSocket
         self.websocket: Optional[PolyWebSocket] = None
@@ -125,6 +141,14 @@ class Orchestrator:
         print(f"   モード: {self.config.mode.value}")
         print(f"   モデル: {self.config.llm_model}")
         print(f"   最小エッジ: {self.config.min_edge:.0%}")
+        
+        # ダッシュボード起動
+        dashboard_task = None
+        if self.dashboard:
+            print(f"   📊 Dashboard: http://localhost:{self.config.dashboard_port}")
+            dashboard_task = asyncio.create_task(self.dashboard.run_async())
+            await self.dashboard.update_state("status", "running")
+        
         print("\nCtrl+C で停止\n")
         
         try:
@@ -145,12 +169,12 @@ class Orchestrator:
                 self._analysis_loop(markets)
             )
             
-            # 両タスクを待機
-            await asyncio.gather(
-                self._ws_task,
-                self._analysis_task,
-                return_exceptions=True,
-            )
+            # タスクを待機
+            tasks = [self._ws_task, self._analysis_task]
+            if dashboard_task:
+                tasks.append(dashboard_task)
+            
+            await asyncio.gather(*tasks, return_exceptions=True)
             
         except KeyboardInterrupt:
             print("\n\n👋 停止中...")
@@ -257,6 +281,17 @@ class Orchestrator:
             else:
                 print(f"   ❌ 失敗: {result.message}")
             
+            # ダッシュボード更新
+            if self.dashboard:
+                await self.dashboard.push_trade({
+                    "question": trigger.question[:50],
+                    "side": trigger.side,
+                    "price": price,
+                    "size": trigger.size,
+                    "success": result.success,
+                })
+                await self.dashboard.remove_trigger(trigger.token_id)
+            
             # トリガー削除
             del self.active_triggers[trigger.token_id]
             
@@ -335,6 +370,17 @@ class Orchestrator:
             
             print(f"   予測: {signal.final_probability:.1%} | エッジ: {signal.edge:+.1%}")
             
+            # ダッシュボード更新
+            if self.dashboard:
+                await self.dashboard.push_signal({
+                    "question": question[:50],
+                    "action": signal.action.value,
+                    "market_price": getattr(market, 'yes_price', 0),
+                    "predicted_prob": signal.final_probability,
+                    "edge": signal.edge,
+                    "confidence": signal.confidence,
+                })
+            
             # Auditorチェック
             audit_result = self.auditor.audit(
                 market_id=getattr(market, 'market_id', ''),
@@ -407,6 +453,16 @@ class Orchestrator:
         
         print(f"   ⏰ トリガー設定: {signal.action.value} @ {target_price:.4f}")
         print(f"      サイズ: ${size:.2f} | 有効期限: {self.config.trigger_expiry_minutes}分")
+        
+        # ダッシュボード更新
+        if self.dashboard:
+            await self.dashboard.push_trigger({
+                "token_id": token_id,
+                "question": question[:50],
+                "side": signal.action.value,
+                "target_price": target_price,
+                "size": size,
+            })
     
     def _get_analysis_interval(self, markets: List) -> int:
         """分析間隔を決定 (分)"""

@@ -116,6 +116,8 @@ async def cmd_run(args):
         max_markets=args.limit,
         max_trades_per_cycle=args.max_trades,
         fetch_news=not args.no_news,
+        dashboard=args.dashboard,
+        dashboard_port=args.dashboard_port,
     )
     
     orchestrator = Orchestrator(config)
@@ -186,6 +188,8 @@ def main():
     p_run.add_argument("--min-edge", type=float, default=0.10, help="最小エッジ")
     p_run.add_argument("--max-trades", type=int, default=3, help="最大取引数/サイクル")
     p_run.add_argument("--no-news", action="store_true", help="ニュース取得を無効化")
+    p_run.add_argument("--dashboard", action="store_true", help="ダッシュボード有効化")
+    p_run.add_argument("--dashboard-port", type=int, default=8080, help="ダッシュボードポート")
     p_run.add_argument("--dry-run", action="store_true", default=True, help="ドライラン")
     p_run.add_argument("--live", action="store_true", help="本番実行")
     
