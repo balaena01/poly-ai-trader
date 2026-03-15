@@ -344,12 +344,13 @@ class Orchestrator:
                 original_confidence=signal.confidence,
             )
             
-            if audit_result.should_block:
-                print(f"   🚫 ブロック: {audit_result.block_reason}")
+            if not audit_result.passed:
+                flags_str = ", ".join([f.flag_type for f in audit_result.flags]) if audit_result.flags else "unknown"
+                print(f"   🚫 ブロック: {flags_str}")
                 return
             
             # 信頼度調整
-            adjusted_confidence = signal.confidence * (1 - audit_result.total_penalty)
+            adjusted_confidence = audit_result.adjusted_confidence
             
             # 最小条件チェック
             if signal.edge < self.config.min_edge:
