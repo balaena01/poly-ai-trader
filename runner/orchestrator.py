@@ -18,6 +18,7 @@ from analyst import EnsembleAnalyst
 from executor import TradeExecutor
 from risk import RiskManager, Auditor
 from data_fetcher import PolyWebSocket, GoogleNewsFetcher, NewsFetcher, PriceHistoryFetcher
+from factor import FactorManager
 
 # Dashboard (optional)
 try:
@@ -104,6 +105,7 @@ class Orchestrator:
         )
         self.risk_manager = RiskManager()
         self.auditor = Auditor()
+        self.factor_manager = FactorManager()
         # Google News RSS (高速・安定)
         self.news_fetcher = GoogleNewsFetcher()
         
@@ -279,6 +281,18 @@ class Orchestrator:
                 self.stats["trades_success"] += 1
                 print(f"   ✅ 約定: {result.message}")
                 self.executed_markets.add(trigger.market_id)
+                
+                # ファクター記録 (アクティブファクターがあれば)
+                active_factors = self.factor_manager.get_active_factors()
+                if active_factors:
+                    # 最初のアクティブファクターに記録 (将来的には紐付け改善)
+                    factor = active_factors[0]
+                    self.factor_manager.record_trade(
+                        factor_id=factor.hypothesis.id,
+                        pnl=0,  # 実際のPnLは解決時に更新
+                        entry_price=price,
+                        market_id=trigger.market_id,
+                    )
             else:
                 print(f"   ❌ 失敗: {result.message}")
             
