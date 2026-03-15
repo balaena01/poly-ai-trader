@@ -117,6 +117,7 @@ class EnsembleAnalyst:
         btc_change: float = None,
         eth_price: float = None,
         eth_change: float = None,
+        news_context: str = None,
     ) -> EnsembleSignal:
         """
         マーケットを分析
@@ -139,15 +140,22 @@ class EnsembleAnalyst:
         signals = []
         
         # ========== LLM 分析 ==========
+        context = {}
+        if btc_price:
+            context["btc_price"] = btc_price
+        if btc_change:
+            context["btc_change"] = btc_change
+        if eth_price:
+            context["eth_price"] = eth_price
+        if eth_change:
+            context["eth_change"] = eth_change
+        if news_context:
+            context["news"] = news_context
+        
         llm_result = await self.llm_analyst.analyze_market(
             question=market.question,
             current_price=market.yes_price,
-            context={
-                "btc_price": btc_price,
-                "btc_change": btc_change,
-                "eth_price": eth_price,
-                "eth_change": eth_change,
-            } if btc_price else None,
+            context=context if context else None,
         )
         
         llm_prob = llm_result.get("probability", 0.5) if llm_result else 0.5
