@@ -376,6 +376,9 @@ class Orchestrator:
                 # 解決済みマーケットをチェック
                 await self._check_resolved_markets()
                 
+                # 期限切れトリガーをクリーンアップ
+                await self._cleanup_expired_triggers()
+                
                 # ダッシュボードにPnL更新
                 if self.dashboard:
                     stats = self.position_tracker.get_stats()
