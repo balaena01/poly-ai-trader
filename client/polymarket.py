@@ -441,18 +441,25 @@ class PolyClient:
             if not w3 or not w3.is_connected():
                 return 0.0
             
-            # USDC on Polygon
-            usdc_address = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
+            # USDC on Polygon (both bridged and native)
+            usdc_addresses = [
+                "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",  # Native USDC
+                "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",  # Bridged USDC.e
+            ]
             
             # ERC20 ABI (balanceOf only)
             abi = [{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}]
             
-            contract = w3.eth.contract(address=Web3.to_checksum_address(usdc_address), abi=abi)
-            balance_wei = contract.functions.balanceOf(Web3.to_checksum_address(self.funder)).call()
+            total_balance = 0.0
+            for usdc_address in usdc_addresses:
+                try:
+                    contract = w3.eth.contract(address=Web3.to_checksum_address(usdc_address), abi=abi)
+                    balance_wei = contract.functions.balanceOf(Web3.to_checksum_address(self.funder)).call()
+                    total_balance += balance_wei / 10**6  # USDC is 6 decimals
+                except:
+                    continue
             
-            # USDC is 6 decimals
-            balance = balance_wei / 10**6
-            return balance
+            return total_balance
             
         except Exception as e:
             print(f"残高取得エラー: {e}")
