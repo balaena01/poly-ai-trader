@@ -64,8 +64,8 @@ class OrchestratorConfig:
     """設定"""
     # 分析
     llm_model: str = "claude-haiku-4-5-20251001"
-    min_edge: float = 0.10
-    min_confidence: float = 0.60
+    min_edge: float = 0.02  # テスト用 (本番: 0.10)
+    min_confidence: float = 0.30  # テスト用 (本番: 0.60)
     max_markets: int = 10
     
     # 実行
