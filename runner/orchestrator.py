@@ -55,10 +55,18 @@ class TriggerCondition:
     def should_execute(self, current_price: float) -> bool:
         if self.is_expired():
             return False
-        if self.side == "BUY":
+        # BUY_YES: YES価格が下がったら買い
+        # BUY_NO: YES価格が上がったら買い (NO が安くなる)
+        # SELL_YES: YES価格が上がったら売り
+        # SELL_NO: YES価格が下がったら売り
+        if self.side == "BUY_YES":
             return current_price <= self.target_price
-        else:
+        elif self.side == "BUY_NO":
             return current_price >= self.target_price
+        elif self.side == "SELL_YES":
+            return current_price >= self.target_price
+        else:  # SELL_NO
+            return current_price <= self.target_price
 
 
 @dataclass
@@ -515,11 +523,18 @@ class Orchestrator:
             del self.active_triggers[token_id]
         
         # 目標価格 (現在価格から少し有利な位置)
+        # YES価格ベースで計算
         current_price = getattr(market, 'yes_price', 0.5)
-        if "BUY" in signal.action.value:
-            target_price = current_price * 0.98  # 2%下で買い
-        else:
-            target_price = current_price * 1.02  # 2%上で売り
+        action = signal.action.value
+        
+        if action == "BUY_YES":
+            target_price = current_price * 0.99  # YES が1%下がったら買い
+        elif action == "BUY_NO":
+            target_price = current_price * 1.01  # YES が1%上がったら買い (= NO が安くなる)
+        elif action == "SELL_YES":
+            target_price = current_price * 1.01  # YES が1%上がったら売り
+        else:  # SELL_NO
+            target_price = current_price * 0.99  # YES が1%下がったら売り
         
         # エクスポージャーチェック
         if not self.risk_manager.can_add_position(size):
