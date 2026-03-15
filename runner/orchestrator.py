@@ -104,8 +104,8 @@ class Orchestrator:
         )
         self.risk_manager = RiskManager()
         self.auditor = Auditor()
-        # Scrapling版 (ステルスモード)
-        self.news_fetcher = NewsFetcher(use_stealth=True)
+        # Google News RSS (高速・安定)
+        self.news_fetcher = GoogleNewsFetcher()
         
         # ダッシュボード
         self.dashboard = None
