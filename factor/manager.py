@@ -262,6 +262,16 @@ class FactorManager:
             worst_factor=worst.hypothesis.name if worst else None,
         )
     
+    def evaluate_all(self) -> List[Factor]:
+        """全ファクターを評価し、基準を満たさないものを淘汰"""
+        killed = []
+        for factor in list(self.factors.values()):
+            if factor.is_active and factor.total_trades >= self.min_trades_for_evaluation:
+                if factor.ic < self.min_ic:
+                    self.kill_factor(factor.hypothesis.id, f"IC {factor.ic:.4f} < {self.min_ic}")
+                    killed.append(factor)
+        return killed
+    
     def get_leaderboard(self, top_n: int = 10) -> List[Dict]:
         """リーダーボードを取得"""
         active = self.get_active_factors()
