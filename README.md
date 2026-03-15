@@ -70,10 +70,10 @@ WebSocket 常時監視
 ```bash
 # インストール
 pip install -r requirements.txt
-pip install scrapling  # ニュース取得用 (オプション)
 
 # 環境変数設定
 cp .env.example .env
+# POLY_PRIVATE_KEY, POLY_FUNDER_ADDRESS, ANTHROPIC_API_KEY を設定
 
 # マーケットスキャン
 python main.py scan
@@ -81,12 +81,25 @@ python main.py scan
 # LLM分析
 python main.py analyze -n 5
 
-# 取引 (ドライラン)
-python main.py trade --execute
+# 自動売買 (ドライラン + ダッシュボード)
+python main.py run --dashboard --dry-run
 
-# 自動ループ
-python main.py run
+# 自動売買 (本番)
+python main.py run --dashboard --live
 ```
+
+## ダッシュボード
+
+```bash
+python main.py run --dashboard --dry-run
+# → http://localhost:8080
+```
+
+リアルタイム表示:
+- **Live Signals**: LLM分析結果
+- **Active Triggers**: 待機中の注文
+- **Trade History**: 取引履歴
+- **Edge Distribution**: エッジの推移グラフ
 
 ## データ取得
 
@@ -100,6 +113,25 @@ python -m data_fetcher.news_fetcher --query "Bitcoin price"
 # マーケット用ニュース
 python -m data_fetcher.news_fetcher --market "Will BTC reach $100k?"
 ```
+
+## 学習層 (Factor Manager)
+
+```bash
+# ファクター生成
+python -m factor.miner --market "Will BTC hit 100k?"
+
+# バックテスト
+python -m factor.backtester --market "Will BTC hit 100k?"
+
+# ファクター管理
+python -m factor.manager --list        # 一覧
+python -m factor.manager --stats       # 統計
+python -m factor.manager --leaderboard # ランキング
+python -m factor.manager --evaluate    # 評価・淘汰
+python -m factor.manager --mine "コンテキスト"  # 新規生成
+```
+
+**自動淘汰**: 50トレード後に IC < 0.05 のファクターは自動削除
 
 ## 環境変数
 
@@ -129,11 +161,15 @@ poly-ai-trader/
 ├── analyst/          # LLM + ML + Orderflow + Bayesian
 ├── executor/         # 注文実行
 ├── risk/             # リスク管理 + 監査
-├── factor/           # 自動学習
+├── factor/           # 自動学習 (Factor Miner + Auto-Killer)
 ├── data_fetcher/     # データ取得
 │   ├── history.py        # 過去価格 (Polymarket API)
 │   ├── websocket_client.py  # リアルタイム (WebSocket)
-│   └── news_fetcher.py   # ニュース (Scrapling/Google)
+│   └── news_fetcher.py   # ニュース (Google News RSS)
+├── dashboard/        # Web UI (Cyberpunk theme)
+│   └── server.py         # FastAPI + WebSocket
+├── runner/           # オーケストレーター
+│   └── orchestrator.py   # 3層統合ランナー
 ├── data/
 │   ├── historical/   # 過去価格データ
 │   ├── news/         # ニュースキャッシュ

@@ -236,6 +236,34 @@ data_fetcher/
 
 ---
 
+## ダッシュボード ✅ 完了
+
+**リアルタイム Web UI** (Cyberpunk × Bloomberg Terminal)
+
+```bash
+python main.py run --dashboard --dry-run
+# → http://localhost:8080
+```
+
+### 機能
+
+| パネル | 説明 |
+|--------|------|
+| Live Signals | LLM分析結果をリアルタイム表示 |
+| Active Triggers | 待機中の注文 |
+| Trade History | 取引履歴 |
+| Edge Distribution | エッジの推移グラフ (Chart.js) |
+| Stats | Balance, PnL, Trades, Triggers |
+
+### 技術
+
+- **Frontend**: HTML/CSS/JS (インラインSPA)
+- **Backend**: FastAPI + WebSocket
+- **Font**: Orbitron + JetBrains Mono
+- **Theme**: Cyberpunk (Neon Cyan/Magenta/Green)
+
+---
+
 ## マイルストーン
 
 | Phase | 目標 | 状態 |
@@ -245,6 +273,7 @@ data_fetcher/
 | 3 | リスク管理 | ✅ 完了 |
 | 4 | 自動学習 | ✅ 完了 |
 | - | データ取得 | ✅ 完了 |
+| - | ダッシュボード | ✅ 完了 |
 
 ---
 
