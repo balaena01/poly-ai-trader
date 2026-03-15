@@ -80,6 +80,9 @@ class RiskManager:
         
         # 相関設定
         max_correlated_exposure: float = 0.20,  # 相関資産の最大エクスポージャー
+        
+        # 総エクスポージャー設定
+        max_total_exposure: float = 0.30,  # 全ポジション合計の最大比率
     ):
         """
         初期化
@@ -92,6 +95,7 @@ class RiskManager:
             max_consecutive_losses: 連敗停止閾値
             max_drawdown_pct: 最大ドローダウン
             max_correlated_exposure: 相関資産の最大エクスポージャー
+            max_total_exposure: 全ポジション合計の最大比率 (デフォルト30%)
         """
         self.initial_balance = initial_balance
         self.current_balance = initial_balance
@@ -104,12 +108,16 @@ class RiskManager:
         self.max_consecutive_losses = max_consecutive_losses
         self.max_drawdown_pct = max_drawdown_pct
         self.max_correlated_exposure = max_correlated_exposure
+        self.max_total_exposure = max_total_exposure
         
         # 取引履歴
         self.trade_history: List[TradeRecord] = []
         
         # 現在のポジション
         self.open_positions: Dict[str, Dict] = {}  # market_id -> {symbol, amount, ...}
+        
+        # アクティブトリガーのエクスポージャー追跡
+        self.pending_exposure: float = 0.0  # トリガー待機中の金額
         
         # 状態
         self.consecutive_losses = 0
@@ -129,6 +137,37 @@ class RiskManager:
         """現在のドローダウン率を取得"""
         if self.peak_balance == 0:
             return 0
+    
+    # ========== エクスポージャー管理 ==========
+    
+    def get_total_exposure(self) -> float:
+        """現在の総エクスポージャーを取得"""
+        open_exposure = sum(p.get("amount", 0) for p in self.open_positions.values())
+        return open_exposure + self.pending_exposure
+    
+    def get_exposure_ratio(self) -> float:
+        """エクスポージャー比率を取得 (0-1)"""
+        if self.current_balance == 0:
+            return 1.0
+        return self.get_total_exposure() / self.current_balance
+    
+    def can_add_position(self, amount: float) -> bool:
+        """新規ポジションを追加可能かチェック"""
+        new_total = self.get_total_exposure() + amount
+        return new_total <= self.current_balance * self.max_total_exposure
+    
+    def add_pending_exposure(self, amount: float):
+        """トリガー設定時にペンディングエクスポージャーを追加"""
+        self.pending_exposure += amount
+    
+    def remove_pending_exposure(self, amount: float):
+        """トリガー発火/期限切れ時にペンディングエクスポージャーを削除"""
+        self.pending_exposure = max(0, self.pending_exposure - amount)
+    
+    def convert_pending_to_open(self, market_id: str, amount: float, symbol: str = ""):
+        """トリガー発火時: ペンディング → オープンポジションに変換"""
+        self.remove_pending_exposure(amount)
+        self.open_positions[market_id] = {"symbol": symbol, "amount": amount}
         return (self.peak_balance - self.current_balance) / self.peak_balance
     
     # ========== Kelly サイジング ==========

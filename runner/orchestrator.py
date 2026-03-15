@@ -305,6 +305,11 @@ class Orchestrator:
                 print(f"   ✅ 約定: {result.message}")
                 self.executed_markets.add(trigger.market_id)
                 
+                # エクスポージャー: ペンディング → オープン
+                self.risk_manager.convert_pending_to_open(
+                    trigger.market_id, trigger.size, trigger.question[:30]
+                )
+                
                 # ポジション記録
                 self.position_tracker.record_trade(
                     market_id=trigger.market_id,
@@ -327,6 +332,8 @@ class Orchestrator:
                     )
             else:
                 print(f"   ❌ 失敗: {result.message}")
+                # 失敗時はペンディングを解放
+                self.risk_manager.remove_pending_exposure(trigger.size)
             
             # ダッシュボード更新
             if self.dashboard:
@@ -494,6 +501,12 @@ class Orchestrator:
         else:
             target_price = current_price * 1.02  # 2%上で売り
         
+        # エクスポージャーチェック
+        if not self.risk_manager.can_add_position(size):
+            exposure_ratio = self.risk_manager.get_exposure_ratio()
+            print(f"   ⚠️ エクスポージャー上限 ({exposure_ratio:.0%} / {self.risk_manager.max_total_exposure:.0%})")
+            return
+        
         trigger = TriggerCondition(
             market_id=market_id,
             token_id=token_id,
@@ -506,6 +519,9 @@ class Orchestrator:
         )
         
         self.active_triggers[token_id] = trigger
+        
+        # ペンディングエクスポージャーに追加
+        self.risk_manager.add_pending_exposure(size)
         
         print(f"   ⏰ トリガー設定: {signal.action.value} @ {target_price:.4f}")
         print(f"      サイズ: ${size:.2f} | 有効期限: {self.config.trigger_expiry_minutes}分")
@@ -588,11 +604,13 @@ class Orchestrator:
     async def _cleanup_expired_triggers(self):
         """期限切れトリガーを削除"""
         expired = [
-            tid for tid, t in self.active_triggers.items()
+            (tid, t) for tid, t in self.active_triggers.items()
             if t.is_expired()
         ]
         
-        for tid in expired:
+        for tid, trigger in expired:
+            # ペンディングエクスポージャーを解放
+            self.risk_manager.remove_pending_exposure(trigger.size)
             del self.active_triggers[tid]
             print(f"🗑️ トリガー期限切れ: {tid[:16]}...")
 
