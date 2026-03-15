@@ -416,7 +416,7 @@ class PolyClient:
     
     def get_balance(self) -> float:
         """USDC残高を取得 (Polygon)"""
-        if not self._funder_address:
+        if not self.funder:
             return 0.0
         
         try:
@@ -432,7 +432,7 @@ class PolyClient:
             abi = [{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}]
             
             contract = w3.eth.contract(address=Web3.to_checksum_address(usdc_address), abi=abi)
-            balance_wei = contract.functions.balanceOf(Web3.to_checksum_address(self._funder_address)).call()
+            balance_wei = contract.functions.balanceOf(Web3.to_checksum_address(self.funder)).call()
             
             # USDC is 6 decimals
             balance = balance_wei / 10**6
