@@ -69,24 +69,46 @@ class Signal:
         }
 
 
-# 利用可能なモデル
+# ========== 利用可能なモデル ==========
+# LiteLLM は環境変数から自動で API キーを読み込む:
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY
+
 MODELS = {
-    # Anthropic (直接)
-    "claude-haiku": "claude-3-haiku-20240307",
-    "claude-sonnet": "claude-sonnet-4-20250514",
-    "claude-opus": "claude-opus-4-20250514",
+    # ========== Anthropic (最新) ==========
+    # 最新世代 (2026年3月時点)
+    "claude-opus-4.6": "claude-opus-4-6",           # 最高性能、エージェント/コーディング
+    "claude-sonnet-4.6": "claude-sonnet-4-6",       # 速度と性能のバランス
+    "claude-haiku-4.5": "claude-haiku-4-5",         # 最速、低コスト ($1/MTok in)
     
-    # OpenAI (直接)
+    # レガシー (まだ利用可能)
+    "claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
+    "claude-opus-4.5": "claude-opus-4-5-20251101",
+    "claude-sonnet-4": "claude-sonnet-4-20250514",
+    "claude-opus-4": "claude-opus-4-20250514",
+    
+    # 旧世代 (非推奨)
+    "claude-3-haiku": "claude-3-haiku-20240307",    # 非推奨、安い
+    
+    # ========== OpenAI ==========
     "gpt-4o": "gpt-4o",
     "gpt-4o-mini": "gpt-4o-mini",
+    "gpt-4-turbo": "gpt-4-turbo",
+    "gpt-3.5-turbo": "gpt-3.5-turbo",
     
-    # OpenRouter 経由
-    "or-haiku": "openrouter/anthropic/claude-3-haiku",
-    "or-sonnet": "openrouter/anthropic/claude-3.5-sonnet",
+    # ========== OpenRouter 経由 ==========
+    "or/claude-haiku": "openrouter/anthropic/claude-3-haiku",
+    "or/claude-sonnet": "openrouter/anthropic/claude-3.5-sonnet",
+    "or/gpt-4o": "openrouter/openai/gpt-4o",
+    "or/llama-70b": "openrouter/meta-llama/llama-3.1-70b-instruct",
     
-    # Groq
-    "llama-70b": "groq/llama-3.1-70b-versatile",
+    # ========== Groq (高速推論) ==========
+    "groq/llama-70b": "groq/llama-3.1-70b-versatile",
+    "groq/llama-8b": "groq/llama-3.1-8b-instant",
+    "groq/mixtral": "groq/mixtral-8x7b-32768",
 }
+
+# デフォルトモデル
+DEFAULT_MODEL = "claude-haiku-4.5"
 
 
 class LLMAnalyst:
@@ -111,7 +133,7 @@ class LLMAnalyst:
     
     def __init__(
         self,
-        model: str = "claude-haiku",
+        model: str = DEFAULT_MODEL,
         fallback_model: str = None,
     ):
         """
@@ -121,11 +143,11 @@ class LLMAnalyst:
             model: モデル名 (MODELS のキーまたは完全名)
             fallback_model: フォールバックモデル
         
-        環境変数:
-            ANTHROPIC_API_KEY: Anthropic 直接
-            OPENAI_API_KEY: OpenAI 直接
-            OPENROUTER_API_KEY: OpenRouter 経由
-            GROQ_API_KEY: Groq
+        環境変数 (LiteLLM が自動読み込み):
+            ANTHROPIC_API_KEY  : Anthropic 直接
+            OPENAI_API_KEY     : OpenAI 直接
+            OPENROUTER_API_KEY : OpenRouter 経由
+            GROQ_API_KEY       : Groq
         """
         if not LITELLM_AVAILABLE:
             raise RuntimeError("litellm not installed")
@@ -309,13 +331,34 @@ JSON形式で回答してください。
 def list_models():
     """利用可能なモデル一覧"""
     print("\n🤖 利用可能なモデル:\n")
-    for key, model in MODELS.items():
-        print(f"  {key:15} → {model}")
-    print("\n環境変数:")
+    
+    print("━━━ Anthropic (最新) ━━━")
+    for key in ["claude-opus-4.6", "claude-sonnet-4.6", "claude-haiku-4.5"]:
+        print(f"  {key:20} → {MODELS[key]}")
+    
+    print("\n━━━ Anthropic (レガシー) ━━━")
+    for key in ["claude-sonnet-4.5", "claude-opus-4.5", "claude-sonnet-4", "claude-opus-4", "claude-3-haiku"]:
+        print(f"  {key:20} → {MODELS[key]}")
+    
+    print("\n━━━ OpenAI ━━━")
+    for key in ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]:
+        print(f"  {key:20} → {MODELS[key]}")
+    
+    print("\n━━━ OpenRouter 経由 ━━━")
+    for key in ["or/claude-haiku", "or/claude-sonnet", "or/gpt-4o", "or/llama-70b"]:
+        print(f"  {key:20} → {MODELS[key]}")
+    
+    print("\n━━━ Groq (高速) ━━━")
+    for key in ["groq/llama-70b", "groq/llama-8b", "groq/mixtral"]:
+        print(f"  {key:20} → {MODELS[key]}")
+    
+    print("\n━━━ 環境変数 (LiteLLM 自動読み込み) ━━━")
     print("  ANTHROPIC_API_KEY   : Anthropic 直接")
     print("  OPENAI_API_KEY      : OpenAI 直接")
     print("  OPENROUTER_API_KEY  : OpenRouter 経由")
     print("  GROQ_API_KEY        : Groq")
+    
+    print(f"\n📌 デフォルト: {DEFAULT_MODEL}")
 
 
 # テスト用
@@ -327,7 +370,7 @@ async def _test():
     result = await scanner.scan()
     
     # 分析
-    analyst = LLMAnalyst(model="claude-haiku")
+    analyst = LLMAnalyst(model=DEFAULT_MODEL)
     
     signals = await analyst.generate_signals(
         markets=result.markets[:2],
