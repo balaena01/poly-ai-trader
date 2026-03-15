@@ -17,7 +17,7 @@ from scanner import MarketScanner
 from analyst import EnsembleAnalyst
 from executor import TradeExecutor
 from risk import RiskManager, Auditor
-from data_fetcher import PolyWebSocket, GoogleNewsFetcher, PriceHistoryFetcher
+from data_fetcher import PolyWebSocket, GoogleNewsFetcher, NewsFetcher, PriceHistoryFetcher
 
 # Dashboard (optional)
 try:
@@ -104,7 +104,8 @@ class Orchestrator:
         )
         self.risk_manager = RiskManager()
         self.auditor = Auditor()
-        self.news_fetcher = GoogleNewsFetcher()
+        # Scrapling版 (ステルスモード)
+        self.news_fetcher = NewsFetcher(use_stealth=True)
         
         # ダッシュボード
         self.dashboard = None

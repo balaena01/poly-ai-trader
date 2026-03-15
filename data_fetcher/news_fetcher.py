@@ -342,6 +342,65 @@ class NewsFetcher:
         
         return score
     
+    async def search(self, query: str, limit: int = 10) -> List[NewsArticle]:
+        """
+        統合検索 (Scrapling + Google News RSS)
+        
+        Args:
+            query: 検索クエリ
+            limit: 最大件数
+        
+        Returns:
+            List[NewsArticle]
+        """
+        articles = []
+        
+        # 1. Scraplingで各ソースから取得
+        if SCRAPLING_AVAILABLE:
+            try:
+                scraped = await self.fetch_all(limit_per_source=3)
+                # クエリでフィルタリング
+                query_lower = query.lower()
+                for a in scraped:
+                    if query_lower in a.title.lower() or query_lower in a.summary.lower():
+                        articles.append(a)
+            except Exception as e:
+                print(f"⚠️ Scrapling取得エラー: {e}")
+        
+        # 2. Google News RSSで補完
+        try:
+            rss_url = f"https://news.google.com/rss/search?q={query.replace(' ', '+')}&hl=en-US&gl=US&ceid=US:en"
+            async with httpx.AsyncClient(timeout=30) as client:
+                resp = await client.get(rss_url)
+                resp.raise_for_status()
+                
+                import re
+                items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
+                
+                for item in items[:limit]:
+                    title_match = re.search(r'<title>(.*?)</title>', item)
+                    link_match = re.search(r'<link>(.*?)</link>', item)
+                    source_match = re.search(r'<source[^>]*>(.*?)</source>', item)
+                    
+                    if title_match and link_match:
+                        articles.append(NewsArticle(
+                            title=title_match.group(1).replace('&amp;', '&'),
+                            url=link_match.group(1),
+                            source=source_match.group(1) if source_match else "Google News",
+                        ))
+        except Exception as e:
+            print(f"⚠️ Google News RSSエラー: {e}")
+        
+        # 重複除去
+        seen = set()
+        unique = []
+        for a in articles:
+            if a.title not in seen:
+                seen.add(a.title)
+                unique.append(a)
+        
+        return unique[:limit]
+    
     def save_context(self, context: NewsContext, filename: str = None):
         """コンテキストを保存"""
         if not filename:
