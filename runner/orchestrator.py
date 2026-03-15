@@ -10,6 +10,7 @@ import asyncio
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Dict, Optional, Set
 from enum import Enum
 
@@ -110,10 +111,15 @@ class Orchestrator:
         
         # コンポーネント
         self.scanner = MarketScanner()
-        # Ensemble Analyst (ML はモデル学習後に有効化)
+        # ML モデルパス
+        ml_model_path = Path(__file__).parent.parent / "models" / "lgb_model.pkl"
+        use_ml = ml_model_path.exists()
+        
+        # Ensemble Analyst
         self.analyst = EnsembleAnalyst(
             llm_model=self.config.llm_model,
-            use_ml=False,        # TODO: モデル学習後に有効化
+            ml_model_path=str(ml_model_path) if use_ml else None,
+            use_ml=use_ml,
             use_orderflow=True,  # WebSocket から取引データ収集
         )
         self.executor = TradeExecutor(
