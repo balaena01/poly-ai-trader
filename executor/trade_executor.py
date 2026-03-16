@@ -284,12 +284,14 @@ class TradeExecutor:
                         message=f"注文成功 (試行 {attempt})",
                     )
                     self.history.append(result)
-                    
+
                     print(f"  ✅ {signal.action.value} ${amount:.2f} @ {price:.1%}")
                     return result
-                
+                else:
+                    print(f"  ⚠️ 試行 {attempt} 失敗: {trade_result.message}")
+
             except Exception as e:
-                print(f"  ⚠️ 試行 {attempt} 失敗: {e}")
+                print(f"  ⚠️ 試行 {attempt} 例外: {e}")
                 
                 if attempt < self.max_retries:
                     import asyncio
