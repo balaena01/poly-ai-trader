@@ -387,6 +387,8 @@ class Orchestrator:
                 current_edge = price - trigger.signal_probability
 
             min_viable_edge = self.config.min_edge * 0.5  # シグナル閾値の50%まで許容
+            print(f"   🔎 エッジ再検証: {trigger.side} signal_prob={trigger.signal_probability:.4f} "
+                  f"price={price:.4f} edge={current_edge:+.3f} (閾値>{min_viable_edge:.3f})")
             if current_edge < min_viable_edge:
                 print(f"   ⚪ 発火キャンセル: エッジ消滅 (現在エッジ {current_edge:+.1%} < 閾値 {min_viable_edge:.1%})")
                 self._log_event("trigger_cancelled", {
