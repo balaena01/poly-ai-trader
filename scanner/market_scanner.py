@@ -193,7 +193,13 @@ class MarketScanner:
             min_volume: 最低出来高フィルター ($)
         """
         if keywords is None:
-            keywords = ["BTC", "Bitcoin", "ETH", "Ethereum", "crypto"]
+            keywords = [
+                "BTC", "Bitcoin", "ETH", "Ethereum", "crypto",
+                "NBA", "NFL", "soccer", "tennis", "UFC",
+                "temperature", "weather",
+                "Oscar", "Grammy", "award",
+                "election", "Trump", "Fed",
+            ]
         
         markets = []
         
