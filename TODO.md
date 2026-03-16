@@ -8,6 +8,10 @@
 
 | コミット | 内容 |
 |---|---|
+| `13022e3` | fix: FOK→GTC + BUY_NO異常検知ログ修正 (live_price vs expected比較に修正) |
+| `f309fc7` | fix: allowance表示を allowances辞書から取得するよう修正 (allowance=∞表示) |
+| `a7eb267` | fix: update_balance_allowance → get の順で呼び出し (allowance同期+正確なログ) |
+| `50304a2` | fix: 接続ログを get_balance_allowance に修正 (実残高表示) |
 | (最新) | fix: ensemble アクション閾値0.10→0 (HOLDバグ修正、BUY_YES/BUY_NO正常化) |
 | | fix: run デフォルト最大マーケット数 10→50 |
 | | fix: _analyze_market スキップ理由ログ追加 |
@@ -39,6 +43,32 @@
 | `9a7a8e8` | ML自動再学習 + ホットスワップ実装 |
 | `a4f6ef8` | 学習層 (Factor Manager) の機能不全修正 |
 | `48501f7` | ドキュメント齟齬修正 + バグ修正 |
+
+---
+
+## ✅ 解決済み: 本番注文 FOK失敗
+
+本番live初回トリガー発火時に FOK orders are fully filled or killed が3回連続で出た。
+
+**原因:** FOK注文は全量即時約定できないとKillされる。Polymarketは流動性が薄いマーケットも多く、FOKでは約定できないケースが多い。
+
+**対応:** `client/polymarket.py` の `buy()`/`sell()` デフォルトを FOK→GTC に変更。GTC指値でオーダーブックに積み、流動性が来た時点で約定。
+
+---
+
+## ✅ 解決済み: 接続時 allowance=$0.00 誤表示
+
+`update_balance_allowance` は None を返すため残高表示が $0.00 になっていた。
+`get_balance_allowance` で実際の値を取得。レスポンスのキーは `allowances`（複数辞書）だったため `allowance`（単数）で取得できていなかった。
+対応後: `balance=$61.04 allowance=∞` と正しく表示。
+
+---
+
+## ✅ 解決済み: SIGNATURE_TYPE 設定確認
+
+Polymarketをメールログイン(Magic Link)で使っているが、POLY_SIGNATURE_TYPE=2 + MetaMaskの秘密鍵が正解。
+Magic Linkの鍵(reveal.magic.link)は別アドレス(0x345F...)で残高なし。
+`POLY_FUNDER_ADDRESS=0x322a...`(Polymarket proxy) + `POLY_PRIVATE_KEY=MetaMask鍵` + `SIGNATURE_TYPE=2` が正しい設定。
 
 ---
 
