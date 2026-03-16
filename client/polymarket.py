@@ -178,17 +178,22 @@ class PolyClient:
             self._client.set_api_creds(self._client.create_or_derive_api_creds())
             self._authenticated = True
 
-            # USDC allowance を更新 (未設定だと注文が "not enough allowance" で弾かれる)
+            # USDC 残高・allowance を確認
             try:
                 from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
-                result = self._client.update_balance_allowance(
+                result = self._client.get_balance_allowance(
                     params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
                 )
                 balance = float(result.get("balance", 0)) / 1e6 if result else 0
-                allowance = float(result.get("allowance", 0)) / 1e6 if result else 0
-                print(f"✅ Polymarket接続成功 (認証済み) balance=${balance:.2f} allowance=${allowance:.2f}")
+                allowance_raw = result.get("allowance", 0) if result else 0
+                # max uint256 は実質無制限
+                if int(allowance_raw) > 1e30:
+                    allowance_str = "∞"
+                else:
+                    allowance_str = f"${float(allowance_raw) / 1e6:.2f}"
+                print(f"✅ Polymarket接続成功 (認証済み) balance=${balance:.2f} allowance={allowance_str}")
             except Exception as ae:
-                print(f"✅ Polymarket接続成功 (認証済み) ⚠️ allowance更新失敗: {ae}")
+                print(f"✅ Polymarket接続成功 (認証済み) ⚠️ 残高確認失敗: {ae}")
 
             return True
             
