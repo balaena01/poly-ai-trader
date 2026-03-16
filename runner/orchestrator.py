@@ -576,16 +576,19 @@ class Orchestrator:
         # 15%未満・85%超の長射程マーケットはスキップ (学習データと一致させる)
         yes_price_now = getattr(market, 'yes_price', 0.5)
         if yes_price_now <= 0.15 or yes_price_now >= 0.85:
+            print(f"   ⏭️ スキップ (価格範囲外 {yes_price_now:.0%}): {question[:40]}")
             return
 
         # end_date なし (before GTA VI 等) または1時間未満・30日超はスキップ (資金長期ロック防止)
         end_date = getattr(market, 'end_date', None)
         if not end_date:
+            print(f"   ⏭️ スキップ (end_dateなし): {question[:40]}")
             return
         if end_date.tzinfo is None:
             end_date = end_date.replace(tzinfo=timezone.utc)
         days_left = (end_date - datetime.now(timezone.utc)).total_seconds() / 86400
         if days_left < (1 / 24) or days_left > 30:
+            print(f"   ⏭️ スキップ (期限 {days_left:.1f}日): {question[:40]}")
             return
 
         print(f"\n🧠 分析: {question[:50]}...")
