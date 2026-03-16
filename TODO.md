@@ -42,6 +42,20 @@
 
 ---
 
+## 🔍 調査中: 本番注文失敗
+
+live初回起動時に `❌ 失敗: 注文失敗 (3回試行)` が出た。失敗理由が握りつぶされていたため原因不明。
+
+**対応済み:** `executor/trade_executor.py` に失敗理由ログ追加 (`⚠️ 試行N 失敗: {message}`)
+
+**次回発火時に確認すること:**
+- `minimum size` → $3台は小さすぎる可能性 (Polymarketの最低注文サイズ確認)
+- `price precision` → 小数点の桁数制限 (例: 0.8200 → 0.82 に丸める必要があるか)
+- `insufficient funds` → CLOB残高不足 (UI残高とCLOB預け残高は別)
+- `invalid token` → トークンID問題 (yes_token_id/no_token_idの取り違え)
+
+---
+
 ## 未対応バグ・懸念点
 
 ### 高優先度
