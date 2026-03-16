@@ -572,8 +572,14 @@ class Orchestrator:
         existing_trigger = self.active_triggers.get(token_id) if token_id else None
         
         question = getattr(market, 'question', str(market))
+
+        # 5%未満・95%超の長射程マーケットはスキップ (学習データと一致させる)
+        yes_price_now = getattr(market, 'yes_price', 0.5)
+        if yes_price_now <= 0.05 or yes_price_now >= 0.95:
+            return
+
         print(f"\n🧠 分析: {question[:50]}...")
-        
+
         try:
             # ニュース取得
             news_context = ""
