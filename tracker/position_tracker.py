@@ -32,7 +32,11 @@ class Position:
     
     status: PositionStatus = PositionStatus.OPEN
     created_at: datetime = field(default_factory=datetime.now)
-    
+
+    # GTC注文追跡
+    order_id: Optional[str] = None        # CLOBのorder ID
+    order_filled: bool = True             # False = GTC未約定
+
     # 解決後
     exit_price: Optional[float] = None
     resolved_at: Optional[datetime] = None
@@ -77,11 +81,13 @@ class Position:
             "size": self.size,
             "status": self.status.value,
             "created_at": self.created_at.isoformat(),
+            "order_id": self.order_id,
+            "order_filled": self.order_filled,
             "exit_price": self.exit_price,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
             "pnl": self.pnl,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict) -> "Position":
         return cls(
@@ -94,6 +100,8 @@ class Position:
             size=data["size"],
             status=PositionStatus(data["status"]),
             created_at=datetime.fromisoformat(data["created_at"]),
+            order_id=data.get("order_id"),
+            order_filled=data.get("order_filled", True),
             exit_price=data.get("exit_price"),
             resolved_at=datetime.fromisoformat(data["resolved_at"]) if data.get("resolved_at") else None,
             pnl=data.get("pnl", 0.0),
@@ -117,12 +125,14 @@ class PositionTracker:
         side: str,
         entry_price: float,
         size: float,
+        order_id: Optional[str] = None,
+        order_filled: bool = True,
     ) -> Position:
         """トレード記録"""
         import uuid
-        
+
         pos_id = str(uuid.uuid4())[:8]
-        
+
         position = Position(
             id=pos_id,
             market_id=market_id,
@@ -131,6 +141,8 @@ class PositionTracker:
             side=side,
             entry_price=entry_price,
             size=size,
+            order_id=order_id,
+            order_filled=order_filled,
         )
         
         self.positions[pos_id] = position
@@ -180,6 +192,23 @@ class PositionTracker:
         
         return pnl
     
+    def get_pending_positions(self) -> List[Position]:
+        """GTC未約定ポジション（order_filled=False）を取得"""
+        return [p for p in self.positions.values()
+                if p.status == PositionStatus.OPEN and not p.order_filled]
+
+    def mark_order_filled(self, pos_id: str):
+        """GTC注文が約定済みとしてマーク"""
+        if pos_id in self.positions:
+            self.positions[pos_id].order_filled = True
+            self._save()
+
+    def remove_position(self, pos_id: str):
+        """ポジションを削除（キャンセル時用）"""
+        if pos_id in self.positions:
+            del self.positions[pos_id]
+            self._save()
+
     def resolve_by_market(self, market_id: str, resolution: float) -> float:
         """マーケットIDで解決"""
         total_pnl = 0.0

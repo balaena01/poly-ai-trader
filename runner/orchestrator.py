@@ -449,7 +449,7 @@ class Orchestrator:
                 # 実際の約定価格 (CLOB ask/bid に更新済みの場合はそちらを使う)
                 entry_price = result.executed_price if result.executed_price else price
 
-                # ポジション記録
+                # ポジション記録 (GTC注文はorder_id保存・未約定フラグ付き)
                 self.position_tracker.record_trade(
                     market_id=trigger.market_id,
                     token_id=trigger.token_id,
@@ -457,6 +457,8 @@ class Orchestrator:
                     side=trigger.side,
                     entry_price=entry_price,
                     size=trigger.size,
+                    order_id=result.order_id,
+                    order_filled=False,  # GTC: 注文受理=未約定、後続チェックで確認
                 )
 
                 # ファクター記録 (アクティブファクターがあれば)
@@ -539,6 +541,9 @@ class Orchestrator:
                         break
                     await self._analyze_market(market)
                 
+                # GTC未約定注文のチェック・自動キャンセル
+                await self._check_pending_gtc_orders()
+
                 # 解決済みマーケットをチェック
                 await self._check_resolved_markets()
                 
@@ -831,6 +836,65 @@ class Orchestrator:
                 "size": size,
             })
     
+    async def _check_pending_gtc_orders(self):
+        """GTC未約定注文の状態確認・60分超でキャンセル"""
+        pending = self.position_tracker.get_pending_positions()
+        if not pending:
+            return
+
+        from client import PolyClient
+        try:
+            client = PolyClient()
+            client.connect()
+        except Exception:
+            return
+
+        now = datetime.now(timezone.utc)
+        gtc_cancel_minutes = 60
+
+        for pos in pending:
+            if not pos.order_id:
+                # order_idなし → フィルド済みとして扱う
+                self.position_tracker.mark_order_filled(pos.id)
+                continue
+
+            order = client.get_order(pos.order_id)
+            if order is None:
+                continue
+
+            order_status = order.get("status", "LIVE")
+
+            if order_status == "MATCHED":
+                # 約定済み
+                self.position_tracker.mark_order_filled(pos.id)
+                print(f"   ✅ GTC約定確認: {pos.question[:40]}")
+
+            elif order_status == "CANCELLED":
+                # 外部からキャンセル済み → ポジション削除
+                self.position_tracker.remove_position(pos.id)
+                if pos.market_id in self.risk_manager.open_positions:
+                    del self.risk_manager.open_positions[pos.market_id]
+                self.executed_markets.discard(pos.market_id)
+                print(f"   🗑️ GTC外部キャンセル検出: {pos.question[:40]}")
+
+            elif order_status == "LIVE":
+                # 未約定 → 経過時間チェック
+                created = pos.created_at
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                elapsed_min = (now - created).total_seconds() / 60
+
+                if elapsed_min > gtc_cancel_minutes:
+                    result = client.cancel_order(pos.order_id)
+                    if result.success:
+                        self.position_tracker.remove_position(pos.id)
+                        if pos.market_id in self.risk_manager.open_positions:
+                            del self.risk_manager.open_positions[pos.market_id]
+                        self.executed_markets.discard(pos.market_id)
+                        print(f"   🗑️ GTC自動キャンセル ({elapsed_min:.0f}分経過): {pos.question[:40]}")
+                    else:
+                        print(f"   ⚠️ GTC自動キャンセル失敗: {result.message}")
+
     async def _check_resolved_markets(self):
         """解決済みマーケットをチェックしてPnL更新"""
         open_market_ids = self.position_tracker.get_open_market_ids()

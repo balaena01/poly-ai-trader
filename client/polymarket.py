@@ -414,6 +414,15 @@ class PolyClient:
         except Exception as e:
             return TradeResult(success=False, message=str(e))
     
+    def get_order(self, order_id: str) -> Optional[Dict]:
+        """注文ステータスを取得 (status: LIVE / MATCHED / CANCELLED)"""
+        if not self._authenticated:
+            return None
+        try:
+            return self._client.get_order(order_id)
+        except Exception:
+            return None
+
     def cancel_order(self, order_id: str) -> TradeResult:
         """注文をキャンセル"""
         if not self._authenticated:
