@@ -189,13 +189,15 @@ class Backtester:
         result: List[ResolvedMarket] = []
         offset = 0
         fetch_limit = 50  # 1リクエストあたり (重いので小さめ)
+        max_pages = 100   # 最大5000件まで探索して見つからなければ打ち切り
         timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
 
         print("🌐 Gamma API から解決済みマーケットを取得中...")
 
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                while len(result) < self.config.limit:
+                pages = 0
+                while len(result) < self.config.limit and pages < max_pages:
                     print(f"   ページ取得中 (offset={offset}, 取得済み={len(result)})...")
                     resp = await client.get(
                         f"{GAMMA_API}/markets",
@@ -203,7 +205,8 @@ class Backtester:
                             "closed": "true",
                             "limit": fetch_limit,
                             "offset": offset,
-                            "order": "volume",
+                            # 解決日時降順: 最近解決されたマーケットから取得
+                            "order": "endDateIso",
                             "ascending": "false",
                         },
                     )
@@ -213,43 +216,11 @@ class Backtester:
                     if not data:
                         break
 
+                    found_in_page = 0
+                    all_too_old = True  # このページの全マーケットが期間外か
+
                     for m in data:
-                        # 解決済み判定: resolution フィールド or resolutionResult
-                        resolution_raw = (
-                            m.get("resolution")
-                            or m.get("resolutionResult")
-                            or m.get("winner")
-                            or ""
-                        )
-                        resolution_str = str(resolution_raw).strip().upper()
-
-                        # "1"/"YES"/"TRUE" → YES、"0"/"NO"/"FALSE" → NO に正規化
-                        if resolution_str in ("1", "YES", "TRUE"):
-                            outcome = "YES"
-                        elif resolution_str in ("0", "NO", "FALSE"):
-                            outcome = "NO"
-                        else:
-                            continue  # 未解決 or 引き分けはスキップ
-
-                        # YES token ID
-                        clob_ids = m.get("clobTokenIds", "[]")
-                        try:
-                            token_ids = json.loads(clob_ids) if isinstance(clob_ids, str) else clob_ids
-                        except Exception:
-                            token_ids = []
-                        yes_token_id = token_ids[0] if token_ids else ""
-                        if not yes_token_id:
-                            continue
-
-                        # 出来高・流動性フィルター
-                        volume = float(m.get("volumeNum") or m.get("volume") or 0)
-                        liquidity = float(m.get("liquidityNum") or m.get("liquidity") or 0)
-                        if volume < self.config.min_volume:
-                            continue
-                        if liquidity < self.config.min_liquidity:
-                            continue
-
-                        # 解決日フィルター
+                        # ── 解決日フィルター (まず日付で絞る) ──────────────
                         end_date = None
                         end_date_str = m.get("endDateIso") or m.get("end_date_iso")
                         if end_date_str:
@@ -263,7 +234,62 @@ class Backtester:
                             if end_date.tzinfo is None:
                                 end_date = end_date.replace(tzinfo=timezone.utc)
                             if end_date < cutoff:
-                                continue
+                                # endDateIso降順なのでこれ以降は全部古い → 早期終了
+                                all_too_old = True
+                                break
+                            all_too_old = False
+
+                        # ── 解決済み判定 ──────────────────────────────────
+                        outcome = None
+
+                        # 1) テキストフィールドから判定
+                        resolution_raw = (
+                            m.get("resolutionResult")
+                            or m.get("resolution")
+                            or m.get("winner")
+                            or ""
+                        )
+                        resolution_str = str(resolution_raw).strip().upper()
+                        if resolution_str in ("1", "YES", "TRUE", "YES "):
+                            outcome = "YES"
+                        elif resolution_str in ("0", "NO", "FALSE", "NO "):
+                            outcome = "NO"
+
+                        # 2) outcomePrices フォールバック: ["1","0"] → YES, ["0","1"] → NO
+                        if outcome is None:
+                            op_raw = m.get("outcomePrices", "[]")
+                            try:
+                                op = json.loads(op_raw) if isinstance(op_raw, str) else op_raw
+                                if op and len(op) >= 2:
+                                    p0 = float(op[0])
+                                    p1 = float(op[1])
+                                    if p0 >= 0.99:
+                                        outcome = "YES"
+                                    elif p1 >= 0.99:
+                                        outcome = "NO"
+                            except Exception:
+                                pass
+
+                        if outcome is None:
+                            continue  # 未解決 or 引き分けはスキップ
+
+                        # ── YES token ID ──────────────────────────────────
+                        clob_ids = m.get("clobTokenIds", "[]")
+                        try:
+                            token_ids = json.loads(clob_ids) if isinstance(clob_ids, str) else clob_ids
+                        except Exception:
+                            token_ids = []
+                        yes_token_id = token_ids[0] if token_ids else ""
+                        if not yes_token_id:
+                            continue
+
+                        # ── 出来高・流動性フィルター ───────────────────────
+                        volume = float(m.get("volumeNum") or m.get("volume") or 0)
+                        liquidity = float(m.get("liquidityNum") or m.get("liquidity") or 0)
+                        if volume < self.config.min_volume:
+                            continue
+                        if liquidity < self.config.min_liquidity:
+                            continue
 
                         result.append(ResolvedMarket(
                             condition_id=m.get("conditionId") or m.get("condition_id", ""),
@@ -274,13 +300,21 @@ class Backtester:
                             liquidity=liquidity,
                             end_date=end_date,
                         ))
+                        found_in_page += 1
 
                         if len(result) >= self.config.limit:
                             break
 
+                    # endDateIso降順で全マーケットが期間外になったら終了
+                    if all_too_old and found_in_page == 0 and offset > 0:
+                        print(f"   ℹ️  期間外マーケットのみ — 探索終了")
+                        break
+
                     if len(data) < fetch_limit:
                         break  # 最終ページ
+
                     offset += fetch_limit
+                    pages += 1
                     await asyncio.sleep(0.3)
 
         except Exception as e:
