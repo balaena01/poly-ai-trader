@@ -8,7 +8,9 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: features.py タイムゾーン naive/aware 減算エラー修正 |
+| (最新) | fix: Action.value大文字小文字不一致によるトリガー誤発火・エッジ再検証スキップ修正 |
+| `be459ab` | fix: CLOB価格異常検出(0.20超乖離フォールバック) + エッジ再検証ログ強化 |
+| `465db87` | chore: requirements.txt scikit-learn追加 + TODO.md更新 |
 | `a77478c` | fix: ML学習データ lookahead bias修正 + マーケット取得ロジック統一 |
 | `d012a76` | fix: バックテスト マーケット取得ロジック全面修正 |
 | `406f552` | fix: バックテスト マーケット取得が0件のまま無限ループする問題を修正 |
