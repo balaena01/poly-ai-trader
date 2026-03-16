@@ -178,15 +178,16 @@ class PolyClient:
             self._client.set_api_creds(self._client.create_or_derive_api_creds())
             self._authenticated = True
 
-            # USDC 残高・allowance を確認
+            # USDC allowance を on-chain から CLOB API へ同期し、残高を確認
             try:
                 from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
-                result = self._client.get_balance_allowance(
-                    params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
-                )
+                params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+                # on-chain 状態を CLOB API に同期 (これがないと "not enough allowance" になる)
+                self._client.update_balance_allowance(params=params)
+                # 同期後の実際の値を取得してログ
+                result = self._client.get_balance_allowance(params=params)
                 balance = float(result.get("balance", 0)) / 1e6 if result else 0
                 allowance_raw = result.get("allowance", 0) if result else 0
-                # max uint256 は実質無制限
                 if int(allowance_raw) > 1e30:
                     allowance_str = "∞"
                 else:
