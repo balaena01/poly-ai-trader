@@ -77,6 +77,7 @@ class BayesianAggregator:
         self,
         market_price: float,
         signals: List[SignalSource],
+        market_liquidity: float = 0,
     ) -> BayesianResult:
         """
         Bayesian統合
@@ -109,6 +110,15 @@ class BayesianAggregator:
                 confidence=0,
             )
         
+        # 流動性に応じて market_weight を動的調整
+        # 高流動性 ($500k+) → 市場価格を50%信頼、低流動性 ($10k) → 20%
+        if market_liquidity > 0:
+            liq_factor = min(1.0, market_liquidity / 500000)
+            effective_market_weight = 0.2 + 0.3 * liq_factor   # [0.2, 0.5]
+        else:
+            effective_market_weight = self.market_weight
+        effective_signal_weight = 1.0 - effective_market_weight
+
         # 信頼度フィルター
         valid_signals = [s for s in signals if s.confidence >= self.min_confidence]
         
@@ -164,10 +174,10 @@ class BayesianAggregator:
         # ========== 最終調整 ==========
         # マーケット価格とシグナルの加重平均
         signal_avg = sum(s.probability * s.weight for s in valid_signals) / sum(s.weight for s in valid_signals)
-        
+
         final = (
-            self.market_weight * market_price +
-            self.signal_weight * (0.5 * posterior + 0.5 * signal_avg)
+            effective_market_weight * market_price +
+            effective_signal_weight * (0.5 * posterior + 0.5 * signal_avg)
         )
         
         # 0-1 にクリップ

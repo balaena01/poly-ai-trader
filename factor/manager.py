@@ -206,9 +206,11 @@ class FactorManager:
         factor.ic = max(-1, min(1, factor.ic))
         
         # 自動淘汰チェック
-        if self.auto_kill:
+        # pnl=0 かつ market_id あり = 未解決のエントリー。解決前に誤判定しないよう
+        # _check_and_kill は update_pnl_by_market() の再計算後にのみ実行する
+        if self.auto_kill and not (pnl == 0 and market_id):
             self._check_and_kill(factor)
-        
+
         self._save_factors()
     
     def update_pnl_by_market(self, market_id: str, pnl: float):

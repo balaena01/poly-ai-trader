@@ -192,6 +192,7 @@ class EnsembleAnalyst:
                 volumes=volumes,
                 bids=bids,
                 asks=asks,
+                trades=trades,
                 yes_price=market.yes_price,
                 market_volume=market.volume,
                 market_liquidity=market.liquidity,
@@ -208,7 +209,7 @@ class EnsembleAnalyst:
                 name="LightGBM",
                 probability=ml_prob,
                 confidence=ml_conf,
-                accuracy=0.60,
+                accuracy=0.55,  # LLMを特徴量として含むため独立性を割り引く
             ))
         
         # ========== Orderflow 分析 ==========
@@ -237,6 +238,7 @@ class EnsembleAnalyst:
         bayesian_result = self.aggregator.aggregate(
             market_price=market.yes_price,
             signals=signals,
+            market_liquidity=getattr(market, "liquidity", 0),
         )
         
         # ========== 最終判断 ==========

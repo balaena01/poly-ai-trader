@@ -524,6 +524,15 @@ class Orchestrator:
                 except Exception as e:
                     pass  # 価格取得失敗は無視
             
+            # 流動性スナップショット (Orderflow分析用)
+            if self.analyst.use_orderflow and self.analyst.orderflow_detector:
+                market_liquidity = getattr(market, "liquidity", 0)
+                if market_liquidity > 0:
+                    self.analyst.orderflow_detector.add_liquidity_snapshot(
+                        timestamp=datetime.now(timezone.utc),
+                        total_liquidity=market_liquidity,
+                    )
+
             # 分析
             signal = await self.analyst.analyze(
                 market=market,
@@ -623,20 +632,20 @@ class Orchestrator:
             self.risk_manager.remove_pending_exposure(existing_trigger.size)
             del self.active_triggers[watch_token_id]
         
-        # 目標価格 (現在価格から少し有利な位置)
-        # YES価格ベースで計算
+        # 目標価格: 現在価格をそのまま使用
+        # Polymarketはイベントドリブン。待機中にエッジが消えるリスクが高いため
+        # 1%オフセットは設けず、シグナル生成時点の価格で即時発火を狙う
         current_price = getattr(market, 'yes_price', 0.5)
-        action = signal.action.value
+        target_price = current_price
         
-        if action == "BUY_YES":
-            target_price = current_price * 0.99  # YES が1%下がったら買い
-        elif action == "BUY_NO":
-            target_price = current_price * 1.01  # YES が1%上がったら買い (= NO が安くなる)
-        elif action == "SELL_YES":
-            target_price = current_price * 1.01  # YES が1%上がったら売り
-        else:  # SELL_NO
-            target_price = current_price * 0.99  # YES が1%下がったら売り
-        
+        # トリガー有効期限: 分析間隔の1.5倍 (最低 trigger_expiry_minutes)
+        # 解決まで7日あるマーケットは分析間隔が240分 → 期限360分にする
+        _analysis_interval_min = self._get_analysis_interval([market])
+        _trigger_expiry_minutes = max(
+            self.config.trigger_expiry_minutes,
+            int(_analysis_interval_min * 1.5),
+        )
+
         # エクスポージャーチェック
         if not self.risk_manager.can_add_position(size):
             exposure_ratio = self.risk_manager.get_exposure_ratio()
@@ -652,7 +661,7 @@ class Orchestrator:
             target_price=target_price,
             size=size,
             signal_confidence=signal.confidence,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=self.config.trigger_expiry_minutes),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=_trigger_expiry_minutes),
         )
         
         # YES token で監視 (WebSocket は YES 価格を送ってくる)
@@ -705,6 +714,8 @@ class Orchestrator:
                                 print(f"💰 マーケット解決: PnL ${pnl:+.2f}")
                                 # ファクターのPnLを後付け更新
                                 self.factor_manager.update_pnl_by_market(market_id, pnl)
+                                # RiskManagerの連敗カウント・残高を更新
+                                self.risk_manager.record_close(market_id, pnl)
 
                             # 解決カウント更新 → ML再学習トリガー
                             self._resolved_since_last_training += 1
@@ -890,6 +901,8 @@ class Orchestrator:
                         prices=prices[-100:],
                         yes_price=getattr(m, "yes_price", 0.5),
                         market_volume=getattr(m, "volume", 0),
+                        market_liquidity=getattr(m, "liquidity", 0),
+                        end_date=getattr(m, "end_date", None),
                     )
                     X_list.append(features.to_list())
                     y_list.append(1 if str(m.outcome).upper() == "YES" else 0)

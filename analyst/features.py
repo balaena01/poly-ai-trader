@@ -114,17 +114,20 @@ class FeatureExtractor:
         # 価格データ
         prices: List[float],          # 価格履歴 (最新が最後)
         volumes: List[float] = None,  # ボリューム履歴
-        
+
         # オーダーブック
         bids: List[Dict] = None,      # [{price, size}, ...]
         asks: List[Dict] = None,      # [{price, size}, ...]
-        
+
+        # 取引履歴 (buy_volume_ratio / order_flow_imbalance 計算に使用)
+        trades: list = None,          # Trade-like objects with .price, .size, .side
+
         # マーケット情報
         yes_price: float = 0.5,
         market_volume: float = 0,
         market_liquidity: float = 0,
         end_date: datetime = None,
-        
+
         # LLM予測
         llm_pred: float = None,
         llm_conf: float = None,
@@ -208,11 +211,41 @@ class FeatureExtractor:
                     features.volume_ratio_1h = current_vol / avg_vol
             
             if len(volumes) >= 10:
-                vol_start = sum(volumes[-10:-5]) / 5 if len(volumes) >= 10 else 0
+                vol_start = sum(volumes[-10:-5]) / 5
                 vol_end = sum(volumes[-5:]) / 5
                 if vol_start > 0:
                     features.volume_trend = (vol_end - vol_start) / vol_start
-        
+
+            # ボリューム・価格相関 (直近20期間の絶対リターンとボリュームの相関)
+            n = min(len(volumes), len(prices), 20)
+            if n >= 5:
+                pc = [
+                    abs(prices[-i] - prices[-i - 1]) / prices[-i - 1]
+                    if prices[-i - 1] > 0 else 0
+                    for i in range(1, n)
+                ]
+                vs = list(volumes[-(n - 1):])
+                if len(pc) == len(vs) and len(pc) >= 2:
+                    mean_p = sum(pc) / len(pc)
+                    mean_v = sum(vs) / len(vs)
+                    cov = sum((pc[i] - mean_p) * (vs[i] - mean_v) for i in range(len(pc))) / len(pc)
+                    std_p = math.sqrt(sum((x - mean_p) ** 2 for x in pc) / len(pc))
+                    std_v = math.sqrt(sum((x - mean_v) ** 2 for x in vs) / len(vs))
+                    if std_p > 0 and std_v > 0:
+                        features.volume_price_corr = max(-1.0, min(1.0, cov / (std_p * std_v)))
+
+        # ========== 取引フロー (buy_volume_ratio / order_flow_imbalance) ==========
+        if trades:
+            try:
+                buy_val = sum(t.price * t.size for t in trades if getattr(t, "side", "") == "buy")
+                sell_val = sum(t.price * t.size for t in trades if getattr(t, "side", "") == "sell")
+                total_val = buy_val + sell_val
+                if total_val > 0:
+                    features.buy_volume_ratio = buy_val / total_val
+                    features.order_flow_imbalance = (buy_val - sell_val) / total_val
+            except Exception:
+                pass  # 取引データ形式が不正でも続行
+
         # ========== オーダーブック ==========
         if bids and asks:
             best_bid = bids[0]["price"] if bids else 0
