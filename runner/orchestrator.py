@@ -79,8 +79,8 @@ class OrchestratorConfig:
     """設定"""
     # 分析
     llm_model: str = "claude-haiku-4-5-20251001"
-    min_edge: float = 0.15          # 0.10 → 0.15 (低品質シグナル削減)
-    min_confidence: float = 0.60
+    min_edge: float = 0.05
+    min_confidence: float = 0.50
     max_markets: int = 10
 
     # マーケット品質フィルター
