@@ -53,7 +53,7 @@ class ResolvedMarket:
 class BacktestConfig:
     days: int = 90                      # 過去何日分のマーケットを対象にするか
     limit: int = 100                    # 最大マーケット数
-    min_volume: float = 10_000          # 最小 24h 出来高 ($)
+    min_volume: float = 1_000           # 最小出来高 ($) ※closed後はliquidityが0になるためvolumeのみでフィルター
     min_liquidity: float = 10_000       # 最小流動性 ($)
     use_llm: bool = False               # LLM 分析を使うか
     llm_model: str = "claude-haiku-4-5-20251001"
@@ -188,8 +188,8 @@ class Backtester:
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.config.days)
         result: List[ResolvedMarket] = []
         offset = 0
-        fetch_limit = 50  # 1リクエストあたり (重いので小さめ)
-        max_pages = 100   # 最大5000件まで探索して見つからなければ打ち切り
+        fetch_limit = 50
+        max_pages = 200  # 安全弁 (10,000件まで)
         timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
 
         print("🌐 Gamma API から解決済みマーケットを取得中...")
@@ -205,8 +205,8 @@ class Backtester:
                             "closed": "true",
                             "limit": fetch_limit,
                             "offset": offset,
-                            # 解決日時降順: 最近解決されたマーケットから取得
-                            "order": "endDateIso",
+                            # closedTime降順: 直近に解決されたマーケットから取得
+                            "order": "closedTime",
                             "ascending": "false",
                         },
                     )
@@ -216,62 +216,78 @@ class Backtester:
                     if not data:
                         break
 
-                    found_in_page = 0
-                    all_too_old = True  # このページの全マーケットが期間外か
+                    past_cutoff = False  # このページに cutoff より古いマーケットがあった
 
                     for m in data:
-                        # ── 解決日フィルター (まず日付で絞る) ──────────────
-                        end_date = None
-                        end_date_str = m.get("endDateIso") or m.get("end_date_iso")
-                        if end_date_str:
+                        # ── 解決日時フィルター (closedTime を使用) ──────────
+                        closed_time = None
+                        ct_str = m.get("closedTime")
+                        if ct_str:
                             try:
-                                end_date = datetime.fromisoformat(
-                                    end_date_str.replace("Z", "+00:00")
-                                )
+                                # "2026-03-16 02:50:25+00" → "2026-03-16T02:50:25+00:00"
+                                ct_norm = ct_str.strip().replace(" ", "T")
+                                if ct_norm.endswith("+00"):
+                                    ct_norm += ":00"
+                                elif not ct_norm.endswith("Z") and "+" not in ct_norm[10:] and "-" not in ct_norm[10:]:
+                                    ct_norm += "+00:00"
+                                closed_time = datetime.fromisoformat(ct_norm)
                             except Exception:
                                 pass
-                        if end_date:
-                            if end_date.tzinfo is None:
-                                end_date = end_date.replace(tzinfo=timezone.utc)
-                            if end_date < cutoff:
-                                # endDateIso降順なのでこれ以降は全部古い → 早期終了
-                                all_too_old = True
-                                break
-                            all_too_old = False
+                        if closed_time:
+                            if closed_time.tzinfo is None:
+                                closed_time = closed_time.replace(tzinfo=timezone.utc)
+                            if closed_time < cutoff:
+                                past_cutoff = True
+                                continue
 
-                        # ── 解決済み判定 ──────────────────────────────────
+                        # ── 解決済み判定: outcomePrices を最優先 ──────────
                         outcome = None
+                        op_raw = m.get("outcomePrices", "[]")
+                        try:
+                            op = json.loads(op_raw) if isinstance(op_raw, str) else op_raw
+                            if op and len(op) >= 2:
+                                p0 = float(op[0])
+                                p1 = float(op[1])
+                                if p0 >= 0.99:
+                                    outcome = "YES"
+                                elif p1 >= 0.99:
+                                    outcome = "NO"
+                        except Exception:
+                            pass
 
-                        # 1) テキストフィールドから判定
-                        resolution_raw = (
-                            m.get("resolutionResult")
-                            or m.get("resolution")
-                            or m.get("winner")
-                            or ""
-                        )
-                        resolution_str = str(resolution_raw).strip().upper()
-                        if resolution_str in ("1", "YES", "TRUE", "YES "):
-                            outcome = "YES"
-                        elif resolution_str in ("0", "NO", "FALSE", "NO "):
-                            outcome = "NO"
-
-                        # 2) outcomePrices フォールバック: ["1","0"] → YES, ["0","1"] → NO
+                        # テキストフィールドでフォールバック
                         if outcome is None:
-                            op_raw = m.get("outcomePrices", "[]")
+                            res_raw = (
+                                m.get("resolutionResult")
+                                or m.get("resolution")
+                                or m.get("winner")
+                                or ""
+                            )
+                            rs = str(res_raw).strip().upper()
+                            if rs in ("1", "YES", "TRUE"):
+                                outcome = "YES"
+                            elif rs in ("0", "NO", "FALSE"):
+                                outcome = "NO"
+
+                        if outcome is None:
+                            continue  # 未解決 / 無効 / 引き分けはスキップ
+
+                        # ── 短期マーケット除外 ────────────────────────────
+                        # createdAt〜closedTime が1日未満 → 5分足/短期バイナリ → スキップ
+                        created_str = m.get("createdAt")
+                        if created_str and closed_time:
                             try:
-                                op = json.loads(op_raw) if isinstance(op_raw, str) else op_raw
-                                if op and len(op) >= 2:
-                                    p0 = float(op[0])
-                                    p1 = float(op[1])
-                                    if p0 >= 0.99:
-                                        outcome = "YES"
-                                    elif p1 >= 0.99:
-                                        outcome = "NO"
+                                # 小数秒を6桁に正規化 (Pythonのfromisoformatは3/6桁のみ対応)
+                                import re as _re
+                                ca_norm = _re.sub(r'\.(\d+)', lambda x: '.' + x.group(1).ljust(6,'0')[:6], created_str)
+                                ca_norm = ca_norm.replace("Z", "+00:00")
+                                created_at = datetime.fromisoformat(ca_norm)
+                                if created_at.tzinfo is None:
+                                    created_at = created_at.replace(tzinfo=timezone.utc)
+                                if (closed_time - created_at).total_seconds() < 172800:
+                                    continue  # 存続2日未満はスキップ (5分〜24h短期バイナリ除外)
                             except Exception:
                                 pass
-
-                        if outcome is None:
-                            continue  # 未解決 or 引き分けはスキップ
 
                         # ── YES token ID ──────────────────────────────────
                         clob_ids = m.get("clobTokenIds", "[]")
@@ -283,13 +299,23 @@ class Backtester:
                         if not yes_token_id:
                             continue
 
-                        # ── 出来高・流動性フィルター ───────────────────────
+                        # ── 出来高フィルター (liquidityNum は closed後 null になるので無視) ──
                         volume = float(m.get("volumeNum") or m.get("volume") or 0)
-                        liquidity = float(m.get("liquidityNum") or m.get("liquidity") or 0)
                         if volume < self.config.min_volume:
                             continue
-                        if liquidity < self.config.min_liquidity:
-                            continue
+
+                        # end_date は参考値として保持 (バックテスト期間計算用)
+                        end_date = None
+                        ed_str = m.get("endDateIso") or m.get("endDate")
+                        if ed_str:
+                            try:
+                                end_date = datetime.fromisoformat(
+                                    ed_str.replace("Z", "+00:00")
+                                )
+                                if end_date.tzinfo is None:
+                                    end_date = end_date.replace(tzinfo=timezone.utc)
+                            except Exception:
+                                pass
 
                         result.append(ResolvedMarket(
                             condition_id=m.get("conditionId") or m.get("condition_id", ""),
@@ -297,17 +323,16 @@ class Backtester:
                             yes_token_id=yes_token_id,
                             outcome=outcome,
                             volume=volume,
-                            liquidity=liquidity,
-                            end_date=end_date,
+                            liquidity=0.0,  # closed後は0になるため除外
+                            end_date=closed_time or end_date,
                         ))
-                        found_in_page += 1
 
                         if len(result) >= self.config.limit:
                             break
 
-                    # endDateIso降順で全マーケットが期間外になったら終了
-                    if all_too_old and found_in_page == 0 and offset > 0:
-                        print(f"   ℹ️  期間外マーケットのみ — 探索終了")
+                    # closedTime降順でページ全体が期間外なら終了
+                    if past_cutoff and len(result) == 0 and pages > 0:
+                        print("   期間外マーケットのみ — 探索終了")
                         break
 
                     if len(data) < fetch_limit:
@@ -640,7 +665,7 @@ def main():
     )
     parser.add_argument("--days",             type=int,   default=90,    help="過去何日分を対象にするか")
     parser.add_argument("--limit",            type=int,   default=100,   help="最大マーケット数")
-    parser.add_argument("--min-volume",       type=float, default=10000, help="最小 24h 出来高 ($)")
+    parser.add_argument("--min-volume",       type=float, default=1000,  help="最小出来高 ($)")
     parser.add_argument("--min-liquidity",    type=float, default=10000, help="最小流動性 ($)")
     parser.add_argument("--min-edge",         type=float, default=0.10,  help="最小エッジ")
     parser.add_argument("--min-confidence",   type=float, default=0.60,  help="最小信頼度")
