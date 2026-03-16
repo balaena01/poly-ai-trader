@@ -246,11 +246,12 @@ class MarketScanner:
                             except:
                                 pass
 
-                        # end_dateなし・30日超は除外
+                        # end_dateなし・1時間未満・30日超は除外
                         if not end_date:
                             continue
                         ed = end_date if end_date.tzinfo else end_date.replace(tzinfo=timezone.utc)
-                        if (ed - now).total_seconds() / 86400 > 30:
+                        days_left = (ed - now).total_seconds() / 86400
+                        if days_left < (1 / 24) or days_left > 30:
                             continue
 
                         volume = float(m.get("volumeNum") or m.get("volume", 0) or 0)

@@ -563,7 +563,7 @@ class Orchestrator:
     async def _analyze_market(self, market):
         """単一マーケット分析"""
         # 既に実行済みならスキップ
-        market_id = getattr(market, 'condition_id', str(id(market)))
+        market_id = getattr(market, 'market_id', None) or getattr(market, 'condition_id', str(id(market)))
         if market_id in self.executed_markets:
             return
         
@@ -578,13 +578,14 @@ class Orchestrator:
         if yes_price_now <= 0.15 or yes_price_now >= 0.85:
             return
 
-        # end_date なし (before GTA VI 等) または30日超はスキップ (資金長期ロック防止)
+        # end_date なし (before GTA VI 等) または1時間未満・30日超はスキップ (資金長期ロック防止)
         end_date = getattr(market, 'end_date', None)
         if not end_date:
             return
         if end_date.tzinfo is None:
             end_date = end_date.replace(tzinfo=timezone.utc)
-        if (end_date - datetime.now(timezone.utc)).total_seconds() / 86400 > 30:
+        days_left = (end_date - datetime.now(timezone.utc)).total_seconds() / 86400
+        if days_left < (1 / 24) or days_left > 30:
             return
 
         print(f"\n🧠 分析: {question[:50]}...")
@@ -726,9 +727,9 @@ class Orchestrator:
         if not watch_token_id:
             return
         
-        market_id = getattr(market, 'condition_id', str(id(market)))
+        market_id = getattr(market, 'market_id', None) or getattr(market, 'condition_id', str(id(market)))
         question = getattr(market, 'question', str(market))
-        
+
         # 既存トリガーをチェック (watch_token_id で管理)
         existing_trigger = self.active_triggers.get(watch_token_id)
         if existing_trigger:
@@ -869,7 +870,7 @@ class Orchestrator:
         # 現在価格を収集
         current_prices = {}
         for market in markets:
-            market_id = getattr(market, 'condition_id', None)
+            market_id = getattr(market, 'market_id', None) or getattr(market, 'condition_id', None)
             yes_price = getattr(market, 'yes_price', None)
             if market_id and yes_price:
                 current_prices[market_id] = yes_price
