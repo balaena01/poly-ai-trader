@@ -8,7 +8,10 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: near_resolution誤検知修正 (end_date過去→スキップ + market_idフィールド名修正) |
+| (最新) | fix: ensemble アクション閾値0.10→0 (HOLDバグ修正、BUY_YES/BUY_NO正常化) |
+| | fix: run デフォルト最大マーケット数 10→50 |
+| | fix: _analyze_market スキップ理由ログ追加 |
+| | fix: near_resolution誤検知修正 (end_date過去→スキップ + market_idフィールド名修正) |
 | | refactor: スキャナーをキーワード検索→全件取得+フィルタリング方式に変更 |
 | | fix: main.py CLIデフォルト修正 (model→sonnet-4-6, min-edge→0.05) |
 | | fix: LLM JSON解析エラー対策 (_parse_llm_json で正規表現フォールバック追加) |
