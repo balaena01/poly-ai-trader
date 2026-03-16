@@ -57,7 +57,11 @@ class FactorManager:
         self.factors: Dict[str, Factor] = {}
         
         # ツール
-        self.miner = FactorMiner()
+        try:
+            self.miner = FactorMiner()
+        except Exception as e:
+            print(f"⚠️ FactorMiner 初期化失敗 (litellm未インストール?): {e}")
+            self.miner = None
         self.backtester = FactorBacktester()
         
         # データディレクトリ作成
@@ -75,14 +79,18 @@ class FactorManager:
     ) -> Optional[Factor]:
         """
         新しいファクターを生成・バックテスト・追加
-        
+
         Args:
             context: 市場コンテキスト
             factor_type: 生成するタイプ
-        
+
         Returns:
             追加されたFactor or None
         """
+        if self.miner is None:
+            print("⚠️ FactorMiner が利用できません")
+            return None
+
         # アクティブ数チェック
         active_count = sum(1 for f in self.factors.values() if f.is_active)
         if active_count >= self.max_active_factors:
@@ -161,28 +169,28 @@ class FactorManager:
         factor_id: str,
         pnl: float,
         entry_price: float,
-        exit_price: float,
+        market_id: str = "",
     ):
         """
-        トレードを記録
-        
+        トレードを記録 (エントリー時点。PnLは解決後に update_pnl_by_market() で更新)
+
         Args:
             factor_id: ファクターID
-            pnl: 損益
+            pnl: 損益 (解決前は 0)
             entry_price: エントリー価格
-            exit_price: エグジット価格
+            market_id: マーケットID (解決時のPnL更新に使用)
         """
         if factor_id not in self.factors:
             return
-        
+
         factor = self.factors[factor_id]
-        
+
         # 履歴追加
         factor.trade_history.append({
             "timestamp": datetime.now().isoformat(),
             "pnl": pnl,
             "entry_price": entry_price,
-            "exit_price": exit_price,
+            "market_id": market_id,
         })
         
         # 統計更新
@@ -203,6 +211,32 @@ class FactorManager:
         
         self._save_factors()
     
+    def update_pnl_by_market(self, market_id: str, pnl: float):
+        """
+        マーケット解決時にファクターのPnLを後付け更新し、統計を再計算する
+
+        Args:
+            market_id: 解決したマーケットID
+            pnl: 実現損益
+        """
+        for factor in self.factors.values():
+            if not factor.is_active:
+                continue
+            for trade in factor.trade_history:
+                if trade.get("market_id") == market_id and trade.get("pnl") == 0:
+                    trade["pnl"] = pnl
+                    # 統計を再計算
+                    factor.total_pnl = sum(t.get("pnl", 0) for t in factor.trade_history)
+                    wins = sum(1 for t in factor.trade_history if t.get("pnl", 0) > 0)
+                    factor.win_rate = wins / len(factor.trade_history) if factor.trade_history else 0
+                    avg_pnl = factor.total_pnl / factor.total_trades if factor.total_trades else 0
+                    factor.ic = (factor.win_rate - 0.5) * 2 * (1 + avg_pnl / 100)
+                    factor.ic = max(-1, min(1, factor.ic))
+                    if self.auto_kill:
+                        self._check_and_kill(factor)
+                    self._save_factors()
+                    break
+
     def _check_and_kill(self, factor: Factor):
         """淘汰条件をチェック"""
         if not factor.is_active:

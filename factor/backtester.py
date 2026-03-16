@@ -195,9 +195,13 @@ class FactorBacktester:
     def _simulate_backtest(self, hypothesis: FactorHypothesis) -> BacktestResult:
         """
         シミュレーションバックテスト (実データなし)
-        
-        ファクタータイプに応じた期待パフォーマンスを生成
+
+        ファクタータイプに応じた期待パフォーマンスを生成。
+        仮説IDをシードにすることで同一仮説は常に同じ結果を返す。
         """
+        # 仮説IDをシードにして再現性を確保
+        rng = random.Random(hypothesis.id)
+
         # タイプ別の基本パフォーマンス
         base_performance = {
             FactorType.MOMENTUM: {"ic": 0.08, "sharpe": 1.5, "win_rate": 0.55},
@@ -210,33 +214,33 @@ class FactorBacktester:
         }
         
         base = base_performance.get(hypothesis.type, {"ic": 0.05, "sharpe": 1.0, "win_rate": 0.50})
-        
-        # ランダム変動を加える
-        ic = base["ic"] * random.uniform(0.5, 1.5)
-        sharpe = base["sharpe"] * random.uniform(0.6, 1.4)
-        win_rate = base["win_rate"] * random.uniform(0.9, 1.1)
+
+        # 仮説IDベースのシードRNGで再現性を確保
+        ic = base["ic"] * rng.uniform(0.5, 1.5)
+        sharpe = base["sharpe"] * rng.uniform(0.6, 1.4)
+        win_rate = base["win_rate"] * rng.uniform(0.9, 1.1)
         win_rate = min(0.80, max(0.40, win_rate))
-        
+
         # トレード数
-        total_trades = random.randint(20, 100)
-        
+        total_trades = rng.randint(20, 100)
+
         # 損益計算
         wins = int(total_trades * win_rate)
         losses = total_trades - wins
-        
-        avg_win = self.position_size * random.uniform(0.03, 0.08)
-        avg_loss = self.position_size * random.uniform(0.02, 0.05)
-        
+
+        avg_win = self.position_size * rng.uniform(0.03, 0.08)
+        avg_loss = self.position_size * rng.uniform(0.02, 0.05)
+
         total_pnl = wins * avg_win - losses * avg_loss
         avg_pnl = total_pnl / total_trades
-        
+
         # ドローダウン
-        max_drawdown = random.uniform(0.05, 0.20)
-        
+        max_drawdown = rng.uniform(0.05, 0.20)
+
         # ダミートレード生成
         trades = []
         for i in range(total_trades):
-            is_win = random.random() < win_rate
+            is_win = rng.random() < win_rate
             pnl = avg_win if is_win else -avg_loss
             
             trades.append(Trade(

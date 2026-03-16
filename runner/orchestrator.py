@@ -385,10 +385,14 @@ class Orchestrator:
                     factor = active_factors[0]
                     self.factor_manager.record_trade(
                         factor_id=factor.hypothesis.id,
-                        pnl=0,
+                        pnl=0,           # 解決後に update_pnl_by_market() で更新
                         entry_price=price,
                         market_id=trigger.market_id,
                     )
+
+                # 50トレードごとに新ファクターを生成 (学習層)
+                if self.stats["trades_success"] % 50 == 0:
+                    asyncio.create_task(self._mine_new_factor())
             else:
                 print(f"   ❌ 失敗: {result.message}")
                 # 失敗時はペンディングを解放
@@ -679,6 +683,8 @@ class Orchestrator:
                             pnl = self.position_tracker.resolve_by_market(market_id, resolution)
                             if pnl != 0:
                                 print(f"💰 マーケット解決: PnL ${pnl:+.2f}")
+                                # ファクターのPnLを後付け更新
+                                self.factor_manager.update_pnl_by_market(market_id, pnl)
                 except Exception as e:
                     continue  # 個別エラーは無視
                     
@@ -786,8 +792,22 @@ class Orchestrator:
         else:
             return 240
     
+    # ========== 学習層 ==========
+
+    async def _mine_new_factor(self):
+        """50トレードごとに新ファクターを生成 (バックグラウンド)"""
+        print("\n⛏️ 学習層: 新ファクター生成中...")
+        try:
+            factor = await self.factor_manager.mine_new_factor()
+            if factor:
+                print(f"   ✅ 新ファクター採用: {factor.hypothesis.name} (IC: {factor.ic:.3f})")
+            else:
+                print("   ⚪ ファクター不採用 (IC不足 or 生成失敗)")
+        except Exception as e:
+            print(f"   ❌ ファクター生成エラー: {e}")
+
     # ========== 期限切れトリガー清掃 ==========
-    
+
     async def _cleanup_expired_triggers(self):
         """期限切れトリガーを削除"""
         expired = [
