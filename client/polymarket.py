@@ -371,7 +371,9 @@ class PolyClient:
             else:
                 # 指値注文
                 # amount を size に変換 (shares = amount / price)
-                size = amount / price
+                # maker amount: 小数2桁まで, taker amount (size): 小数4桁まで
+                amount = round(amount, 2)
+                size = round(amount / price, 4)
                 order = OrderArgs(
                     token_id=token_id,
                     price=price,
