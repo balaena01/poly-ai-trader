@@ -209,11 +209,11 @@ class Orchestrator:
         print("\nCtrl+C で停止\n")
         
         try:
-            # 残高取得
+            # 残高取得 (認証モードでCLOBから正確な残高を取得)
             from client import PolyClient
             try:
                 poly_client = PolyClient()
-                poly_client.connect(read_only=True)
+                poly_client.connect()  # 認証あり → CLOB残高を取得
                 balance = poly_client.get_balance()
                 print(f"💰 残高: ${balance:.2f} USDC")
                 
