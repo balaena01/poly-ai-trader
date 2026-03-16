@@ -681,10 +681,22 @@ class Orchestrator:
             # 最小条件チェック
             if abs(signal.edge) < self.config.min_edge:
                 print(f"   ⚪ エッジ不足 ({signal.edge:.1%}, 閾値: ±{self.config.min_edge:.0%})")
+                if existing_trigger:
+                    print(f"   🗑️ 既存トリガーキャンセル (エッジ消滅): {existing_trigger.side}")
+                    self.risk_manager.remove_pending_exposure(existing_trigger.size)
+                    del self.active_triggers[existing_trigger.watch_token_id]
                 return
-            
+
             if adjusted_confidence < self.config.min_confidence:
                 print(f"   ⚪ 信頼度不足 ({adjusted_confidence:.0%})")
+                # 方向が逆転していたらキャンセル、同方向なら維持
+                if existing_trigger:
+                    if existing_trigger.side != signal.action.value:
+                        print(f"   🗑️ 既存トリガーキャンセル (方向逆転): {existing_trigger.side} → {signal.action.value}")
+                        self.risk_manager.remove_pending_exposure(existing_trigger.size)
+                        del self.active_triggers[existing_trigger.watch_token_id]
+                    else:
+                        print(f"   ⏸️ 既存トリガー維持中: {existing_trigger.side} @ {existing_trigger.target_price:.4f}")
                 return
             
             # シグナルをログ
