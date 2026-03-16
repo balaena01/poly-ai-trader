@@ -210,7 +210,7 @@ class MarketScanner:
                         f"{GAMMA_API}/markets",
                         params={
                             "_q": kw,
-                            "limit": limit // len(keywords),
+                            "limit": 20,  # キーワードごとに固定20件取得、フィルター後にlimitで絞る
                             "active": "true",
                             "closed": "false",  # 終了済みマーケット除外
                         }
