@@ -1004,7 +1004,7 @@ class Orchestrator:
             #    - outcomePrices で YES/NO 判定 (resolutionResult は null が多い)
             #    - createdAt〜closedTime < 2日は短期バイナリ → 除外
             resolved = []
-            cutoff_retrain = datetime.now(timezone.utc) - timedelta(days=180)
+            cutoff_retrain = datetime.now(timezone.utc) - timedelta(days=30)
             offset_r = 0
             async with _httpx.AsyncClient(timeout=_timeout) as hclient:
                 while len(resolved) < 1000:

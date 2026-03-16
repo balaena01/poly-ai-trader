@@ -8,7 +8,7 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: 自動再学習 resolved[:150]キャップ削除 + stratify追加 |
+| (最新) | chore: 自動再学習の対象期間を180日→30日に変更 |
 | `dafcd85` | fix: Action.value大文字小文字不一致によるトリガー誤発火・エッジ再検証スキップ修正 |
 | `be459ab` | fix: CLOB価格異常検出(0.20超乖離フォールバック) + エッジ再検証ログ強化 |
 | `465db87` | chore: requirements.txt scikit-learn追加 + TODO.md更新 |
