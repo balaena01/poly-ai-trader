@@ -306,7 +306,7 @@ class PolyClient:
         token_id: str,
         amount: float,
         price: float = None,
-        order_type: str = "GTC",
+        order_type: str = "FOK",
     ) -> TradeResult:
         """
         買い注文
@@ -324,7 +324,7 @@ class PolyClient:
         token_id: str,
         amount: float,
         price: float = None,
-        order_type: str = "GTC",
+        order_type: str = "FOK",
     ) -> TradeResult:
         """
         売り注文
@@ -415,52 +415,66 @@ class PolyClient:
         return []
     
     def get_balance(self) -> float:
-        """USDC残高を取得 (Polygon)"""
+        """USDC残高を取得
+
+        優先順位:
+        1. CLOB API (認証済み時) — Polymarketに預けた実残高
+        2. オンチェーン Web3 — proxy walletのUSDC残高 (fallback)
+        """
+        # ── 1. CLOB API (最も正確) ──────────────────────────────────────────
+        if self._authenticated and self._client:
+            try:
+                balance = self._client.get_balance()
+                if balance is not None:
+                    return float(balance)
+            except Exception:
+                pass  # CLOBで取れなければWeb3にフォールバック
+
+        # ── 2. オンチェーン Web3 (fallback) ──────────────────────────────────
         if not self.funder:
             return 0.0
-        
+
         try:
             from web3 import Web3
-            
+
             # Polygon RPC (public endpoints)
             rpc_urls = [
                 "https://polygon.llamarpc.com",
                 "https://rpc.ankr.com/polygon",
                 "https://polygon.drpc.org",
             ]
-            
+
             w3 = None
             for rpc_url in rpc_urls:
                 try:
                     w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={'timeout': 5}))
                     if w3.is_connected():
                         break
-                except:
+                except Exception:
                     continue
-            
+
             if not w3 or not w3.is_connected():
                 return 0.0
-            
-            # USDC on Polygon (both bridged and native)
+
+            # USDC on Polygon (native + bridged)
             usdc_addresses = [
                 "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",  # Native USDC
                 "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174",  # Bridged USDC.e
             ]
-            
-            # ERC20 ABI (balanceOf only)
-            abi = [{"constant":True,"inputs":[{"name":"_owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"balance","type":"uint256"}],"type":"function"}]
-            
+
+            abi = [{"constant": True, "inputs": [{"name": "_owner", "type": "address"}], "name": "balanceOf", "outputs": [{"name": "balance", "type": "uint256"}], "type": "function"}]
+
             total_balance = 0.0
             for usdc_address in usdc_addresses:
                 try:
                     contract = w3.eth.contract(address=Web3.to_checksum_address(usdc_address), abi=abi)
                     balance_wei = contract.functions.balanceOf(Web3.to_checksum_address(self.funder)).call()
-                    total_balance += balance_wei / 10**6  # USDC is 6 decimals
-                except:
+                    total_balance += balance_wei / 10**6  # USDC = 6 decimals
+                except Exception:
                     continue
-            
+
             return total_balance
-            
+
         except Exception as e:
             print(f"残高取得エラー: {e}")
             return 0.0

@@ -326,6 +326,25 @@ class TradeExecutor:
         Returns:
             ExecutionResult
         """
+        # 接続確認
+        if not self._connected:
+            self.connect()
+
+        # ── CLOB から実際のask/bid価格を取得 ──────────────────────────────
+        # WebSocketのmidpointではなく板情報から約定可能な価格を使う。
+        # BUY系 → ask価格 (出来値)、SELL系 → bid価格 (受け値)
+        if self._connected and self._client:
+            is_buy = side.upper() in ("BUY_YES", "BUY_NO")
+            quote_side = "BUY" if is_buy else "SELL"
+            try:
+                live_price = self._client.get_price(token_id, side=quote_side)
+                if live_price:
+                    print(f"   📈 約定価格更新: {price:.4f} → {live_price:.4f} (CLOB {quote_side})")
+                    price = live_price
+            except Exception:
+                pass  # 取得失敗時はWebSocket価格で続行
+        # ─────────────────────────────────────────────────────────────────
+
         # Signal オブジェクト作成
         signal = Signal(
             market_id=market_id,
@@ -338,7 +357,7 @@ class TradeExecutor:
             confidence=0.8,  # ダミー
             reasoning="Trigger execution",
         )
-        
+
         return await self.execute(signal, amount=size)
     
     async def execute_signals(
