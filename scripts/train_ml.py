@@ -327,7 +327,7 @@ def train_and_save(X: np.ndarray, y: np.ndarray, model_path: str) -> bool:
 async def main():
     parser = argparse.ArgumentParser(description="ML Model Training (lookahead-free)")
     parser.add_argument("--days",             type=int,   default=90,   help="過去何日分を対象にするか")
-    parser.add_argument("--limit",            type=int,   default=300,  help="最大マーケット数")
+    parser.add_argument("--limit",            type=int,   default=500,  help="最大マーケット数")
     parser.add_argument("--min-volume",       type=float, default=1000, help="最小出来高 ($)")
     parser.add_argument("--analysis-point",   type=float, default=0.60, help="期間の何%%時点で分析するか (0-1)")
     parser.add_argument("--output",           default=str(MODEL_DIR / "lgb_model.pkl"), help="出力パス")

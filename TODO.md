@@ -8,7 +8,8 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: Action.value大文字小文字不一致によるトリガー誤発火・エッジ再検証スキップ修正 |
+| (最新) | chore: ML学習上限を300→500件に拡張 (train_ml.py + 自動再学習) |
+| `dafcd85` | fix: Action.value大文字小文字不一致によるトリガー誤発火・エッジ再検証スキップ修正 |
 | `be459ab` | fix: CLOB価格異常検出(0.20超乖離フォールバック) + エッジ再検証ログ強化 |
 | `465db87` | chore: requirements.txt scikit-learn追加 + TODO.md更新 |
 | `a77478c` | fix: ML学習データ lookahead bias修正 + マーケット取得ロジック統一 |

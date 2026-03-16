@@ -1007,7 +1007,7 @@ class Orchestrator:
             cutoff_retrain = datetime.now(timezone.utc) - timedelta(days=180)
             offset_r = 0
             async with _httpx.AsyncClient(timeout=_timeout) as hclient:
-                while len(resolved) < 200:
+                while len(resolved) < 500:
                     resp = await hclient.get(
                         f"{_gamma}/markets",
                         params={
