@@ -332,7 +332,7 @@ class PolyClient:
         token_id: str,
         amount: float,
         price: float = None,
-        order_type: str = "FOK",
+        order_type: str = "GTC",
     ) -> TradeResult:
         """
         買い注文
@@ -350,7 +350,7 @@ class PolyClient:
         token_id: str,
         amount: float,
         price: float = None,
-        order_type: str = "FOK",
+        order_type: str = "GTC",
     ) -> TradeResult:
         """
         売り注文

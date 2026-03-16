@@ -345,8 +345,10 @@ class TradeExecutor:
                     adjusted_price = (1 - live_price) if is_no_side else live_price
                     # サニティチェック: 入力価格(WebSocket)との差が0.20超はCLOBオーダーブック異常
                     # 超低確率マーケット(例: YES=2.8%)でCLOBがNO価格(0.972)を返すケース対策
-                    if abs(adjusted_price - price) > 0.20:
-                        print(f"   ⚠️ CLOB価格異常 ({adjusted_price:.4f}) — WebSocket価格 {price:.4f} を使用")
+                    clob_display = f"{live_price:.4f}(→YES換算:{adjusted_price:.4f})" if is_no_side else f"{live_price:.4f}"
+                    expected = (1 - price) if is_no_side else price
+                    if abs(live_price - expected) > 0.20:
+                        print(f"   ⚠️ CLOB価格異常 CLOB:{clob_display} 期待:{expected:.4f} — WebSocket価格を使用")
                     else:
                         print(f"   📈 約定価格更新: {price:.4f} → {adjusted_price:.4f} (CLOB {quote_side}{'→YES換算' if is_no_side else ''})")
                         price = adjusted_price
