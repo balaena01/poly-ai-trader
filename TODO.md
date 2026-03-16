@@ -8,7 +8,8 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | feat: エンドツーエンドバックテスト基盤実装 |
+| (最新) | fix: ML再学習 volume データ修正 + Gamma API 直接取得 |
+| `4b2fdbd` | feat: エンドツーエンドバックテスト基盤実装 |
 | `aa70b41` | 設計レベル2件修正: ML独立化 + 構造化ログ |
 | `fdf5dc4` | トレードロジック 高・中バグ8件修正 |
 | `c343fc6` | 深刻度「中」バグ4件修正 (Auditor/タイムゾーン等) |
@@ -60,9 +61,10 @@
 - [ ] **ポジション管理 UI の強化**
   - ダッシュボードにポジション一覧 (エントリー価格・含み損益) を追加したい
 
-- [ ] **ML特徴量の volume データ改善**
-  - 再学習時 (`_retrain_ml_model`) に volume 履歴が取れない
-  - Polymarket の `/prices-history` は volume を返さない。別途 `/trades` エンドポイントから集計が必要
+- [x] **ML特徴量の volume データ改善** — 対応済み
+  - `_retrain_ml_model` で CLOB `/trades` エンドポイントから取引履歴を取得
+  - `buy_volume_ratio` / `order_flow_imbalance` が実データで学習されるように
+  - 合わせて Gamma API 直接呼び出しに変更 (closed=false バグも修正)
 
 ---
 

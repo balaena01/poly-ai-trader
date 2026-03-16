@@ -916,19 +916,55 @@ class Orchestrator:
         print("\n🔄 MLモデル再学習開始 (バックグラウンド)...")
 
         try:
-            loop = asyncio.get_running_loop()
+            import httpx as _httpx
+            import numpy as np
+            from analyst.features import FeatureExtractor
+            from analyst.ml_analyst import MLAnalyst
+            from analyst.orderflow import Trade as OFTrade
+            from sklearn.model_selection import train_test_split
+            from pathlib import Path as _Path
 
-            # 1. 解決済みマーケットをAPIから取得 (ブロッキングAPIをexecutorで)
-            from client import PolyClient
-            client = PolyClient()
-            raw_markets = await loop.run_in_executor(
-                None,
-                lambda: (client.connect(read_only=True) or client.get_markets(limit=200, active=False)),
-            )
-            resolved = [
-                m for m in (raw_markets or [])
-                if getattr(m, "outcome", None) and getattr(m, "yes_token_id", None)
-            ]
+            loop = asyncio.get_running_loop()
+            _gamma = "https://gamma-api.polymarket.com"
+            _clob  = "https://clob.polymarket.com"
+            _timeout = _httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+
+            # 1. Gamma API から解決済みマーケットを直接取得
+            #    PolyClient.get_markets() は closed=false をハードコードしているため使用不可
+            resolved = []
+            async with _httpx.AsyncClient(timeout=_timeout) as hclient:
+                resp = await hclient.get(
+                    f"{_gamma}/markets",
+                    params={"closed": "true", "limit": 200, "order": "volume", "ascending": "false"},
+                )
+                resp.raise_for_status()
+                for m in resp.json():
+                    res_raw = str(
+                        m.get("resolution") or m.get("resolutionResult") or ""
+                    ).strip().upper()
+                    if res_raw in ("1", "YES", "TRUE"):
+                        outcome = "YES"
+                    elif res_raw in ("0", "NO", "FALSE"):
+                        outcome = "NO"
+                    else:
+                        continue
+
+                    clob_ids = m.get("clobTokenIds", "[]")
+                    try:
+                        token_ids = json.loads(clob_ids) if isinstance(clob_ids, str) else clob_ids
+                    except Exception:
+                        token_ids = []
+                    yes_token_id = token_ids[0] if token_ids else ""
+                    if not yes_token_id:
+                        continue
+
+                    resolved.append({
+                        "yes_token_id": yes_token_id,
+                        "outcome": outcome,
+                        "volume": float(m.get("volumeNum") or m.get("volume") or 0),
+                        "liquidity": float(m.get("liquidityNum") or m.get("liquidity") or 0),
+                        "end_date_str": m.get("endDateIso") or m.get("end_date_iso"),
+                    })
 
             if not resolved:
                 print("   ⚠️ 解決済みマーケットなし — 再学習スキップ")
@@ -936,36 +972,76 @@ class Orchestrator:
 
             print(f"   📋 解決済みマーケット: {len(resolved)}件")
 
-            # 2. 特徴量 & ラベルを収集 (価格履歴取得は非同期)
-            from analyst.features import FeatureExtractor
-            import numpy as np
-
+            # 2. 特徴量 & ラベルを収集
             extractor = FeatureExtractor()
             X_list, y_list = [], []
 
-            for m in resolved[:100]:
-                try:
-                    price_points = await self.price_fetcher.fetch_prices(
-                        token_id=m.yes_token_id,
-                        interval="max",
-                        fidelity=60,
-                    )
-                    if len(price_points) < 10:
-                        continue
+            async with _httpx.AsyncClient(timeout=_timeout) as hclient:
+                for m in resolved[:100]:
+                    try:
+                        # 価格履歴
+                        price_points = await self.price_fetcher.fetch_prices(
+                            token_id=m["yes_token_id"],
+                            interval="max",
+                            fidelity=60,
+                        )
+                        if len(price_points) < 10:
+                            continue
+                        prices = [p.price for p in price_points[:-1]]
 
-                    prices = [p.price for p in price_points[:-1]]
-                    features = extractor.extract(
-                        prices=prices[-100:],
-                        yes_price=getattr(m, "yes_price", 0.5),
-                        market_volume=getattr(m, "volume", 0),
-                        market_liquidity=getattr(m, "liquidity", 0),
-                        end_date=getattr(m, "end_date", None),
-                    )
-                    X_list.append(features.to_list())
-                    y_list.append(1 if str(m.outcome).upper() == "YES" else 0)
-                except Exception:
-                    continue
-                await asyncio.sleep(0.2)  # レート制限
+                        # 取引履歴 (volume特徴量: buy_volume_ratio / order_flow_imbalance)
+                        trades: List = []
+                        try:
+                            tr_resp = await hclient.get(
+                                f"{_clob}/trades",
+                                params={"market": m["yes_token_id"], "limit": 500},
+                            )
+                            raw_trades = tr_resp.json()
+                            if isinstance(raw_trades, dict):
+                                raw_trades = raw_trades.get("data", [])
+                            for t in raw_trades:
+                                try:
+                                    ts_str = t.get("timestamp") or t.get("match_time") or ""
+                                    ts = (
+                                        datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                                        if ts_str else datetime.now(timezone.utc)
+                                    )
+                                    trades.append(OFTrade(
+                                        timestamp=ts,
+                                        price=float(t.get("price", 0)),
+                                        size=float(t.get("size", 0)),
+                                        side=(t.get("side") or "").lower(),
+                                    ))
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass  # trades 取得失敗は無視して続行
+
+                        # 終了日パース
+                        end_date = None
+                        end_date_str = m.get("end_date_str")
+                        if end_date_str:
+                            try:
+                                end_date = datetime.fromisoformat(
+                                    end_date_str.replace("Z", "+00:00")
+                                )
+                            except Exception:
+                                pass
+
+                        features = extractor.extract(
+                            prices=prices[-100:],
+                            trades=trades if trades else None,
+                            yes_price=prices[-1] if prices else 0.5,
+                            market_volume=m["volume"],
+                            market_liquidity=m["liquidity"],
+                            end_date=end_date,
+                        )
+                        X_list.append(features.to_list())
+                        y_list.append(1 if m["outcome"] == "YES" else 0)
+
+                    except Exception:
+                        continue
+                    await asyncio.sleep(0.2)  # レート制限
 
             if len(X_list) < 50:
                 print(f"   ⚠️ データ不足 ({len(X_list)}件 < 50件) — 再学習スキップ")
@@ -977,10 +1053,6 @@ class Orchestrator:
             y = np.array(y_list)
 
             # 3. LightGBM学習 (CPU bound → executor でメインループをブロックしない)
-            from analyst.ml_analyst import MLAnalyst
-            from sklearn.model_selection import train_test_split
-            from pathlib import Path as _Path
-
             model_path = str(_Path(__file__).parent.parent / "models" / "lgb_model.pkl")
 
             def _train_sync():
@@ -997,7 +1069,6 @@ class Orchestrator:
 
             # 4. ホットスワップ (分析中でも安全に差し替え)
             self.analyst.reload_ml_model(model_path)
-
             self._resolved_since_last_training = 0
 
         except Exception as e:
