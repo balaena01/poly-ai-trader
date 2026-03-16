@@ -70,6 +70,30 @@
 
 ---
 
+## 🚀 本番切り替えチェックリスト (dry run → live)
+
+```bash
+# 1. dry run のポジション・ログをリセット
+rm data/positions.json
+rm data/trade_log.jsonl
+
+# 2. .env を本番設定に変更
+#    POLY_SIGNATURE_TYPE=2
+#    POLY_PRIVATE_KEY=0x...  (プロキシウォレットの秘密鍵)
+#    POLY_PROXY_ADDRESS=...  (Polymarket UI のウォレットアドレス)
+
+# 3. ML学習済みモデルがあることを確認
+ls models/lgb_model.pkl
+
+# 4. 本番起動
+python main.py run --live --enable-exit
+```
+
+> ⚠️ `data/positions.json` を消さずに `--live` にすると dry run のポジションが引き継がれ、
+> 存在しないポジションのexit注文が出る可能性あり。
+
+---
+
 ## 今後やりたいこと (バックログ)
 
 - [ ] **ML学習の実行** — `pip install lightgbm scikit-learn` → `python scripts/train_ml.py --days 90`
