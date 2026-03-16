@@ -25,11 +25,26 @@ from typing import List, Optional
 # プロジェクトルートをパスに追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from client import PolyClient
+import httpx
+
 from analyst.features import FeatureExtractor
 from analyst.ml_analyst import MLAnalyst
 from analyst.bayesian import BayesianAggregator, SignalSource
 from data_fetcher import PriceHistoryFetcher
+
+GAMMA_API = "https://gamma-api.polymarket.com"
+
+
+@dataclass
+class ResolvedMarket:
+    """バックテスト用: 解決済みマーケット"""
+    condition_id: str
+    question: str
+    yes_token_id: str
+    outcome: str          # "YES" or "NO"
+    volume: float
+    liquidity: float
+    end_date: Optional[datetime]
 
 
 # ===== データクラス =====
@@ -139,7 +154,7 @@ class Backtester:
         signals_generated = 0
 
         for i, market in enumerate(markets, 1):
-            q = getattr(market, "question", "")[:55]
+            q = market.question[:55]
             print(f"[{i:3}/{len(markets)}] {q}")
 
             result = await self._backtest_market(market)
@@ -168,56 +183,106 @@ class Backtester:
 
     # --------- マーケット取得 ---------
 
-    async def _fetch_resolved_markets(self) -> list:
+    async def _fetch_resolved_markets(self) -> List[ResolvedMarket]:
+        """Gamma API から解決済みマーケットを直接取得"""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.config.days)
+        result: List[ResolvedMarket] = []
+        offset = 0
+        fetch_limit = 200  # 1リクエストあたり
+
         try:
-            client = PolyClient()
-            client.connect(read_only=True)
-            raw = client.get_markets(limit=500, active=False)
-            if not raw:
-                return []
+            async with httpx.AsyncClient(timeout=30) as client:
+                while len(result) < self.config.limit:
+                    resp = await client.get(
+                        f"{GAMMA_API}/markets",
+                        params={
+                            "closed": "true",
+                            "limit": fetch_limit,
+                            "offset": offset,
+                            "order": "volume",
+                            "ascending": "false",
+                        },
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
 
-            cutoff = datetime.now(timezone.utc) - timedelta(days=self.config.days)
-            result = []
+                    if not data:
+                        break
 
-            for m in raw:
-                # 解決済み (YES / NO) のみ
-                outcome = str(getattr(m, "outcome", "")).upper()
-                if outcome not in ("YES", "NO"):
-                    continue
+                    for m in data:
+                        # 解決済み判定: resolution フィールド or resolutionResult
+                        resolution_raw = (
+                            m.get("resolution")
+                            or m.get("resolutionResult")
+                            or m.get("winner")
+                            or ""
+                        )
+                        resolution_str = str(resolution_raw).strip().upper()
 
-                # YES token 必須
-                if not getattr(m, "yes_token_id", None):
-                    continue
+                        # "1"/"YES"/"TRUE" → YES、"0"/"NO"/"FALSE" → NO に正規化
+                        if resolution_str in ("1", "YES", "TRUE"):
+                            outcome = "YES"
+                        elif resolution_str in ("0", "NO", "FALSE"):
+                            outcome = "NO"
+                        else:
+                            continue  # 未解決 or 引き分けはスキップ
 
-                # 出来高・流動性フィルター
-                if getattr(m, "volume", 0) < self.config.min_volume:
-                    continue
-                if getattr(m, "liquidity", 0) < self.config.min_liquidity:
-                    continue
-
-                # 期間フィルター (解決日が cutoff より新しいもの)
-                end_date = getattr(m, "end_date", None)
-                if end_date:
-                    if isinstance(end_date, str):
+                        # YES token ID
+                        clob_ids = m.get("clobTokenIds", "[]")
                         try:
-                            end_date = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+                            token_ids = json.loads(clob_ids) if isinstance(clob_ids, str) else clob_ids
                         except Exception:
-                            end_date = None
-                    if isinstance(end_date, datetime):
-                        if end_date.tzinfo is None:
-                            end_date = end_date.replace(tzinfo=timezone.utc)
-                        if end_date < cutoff:
+                            token_ids = []
+                        yes_token_id = token_ids[0] if token_ids else ""
+                        if not yes_token_id:
                             continue
 
-                result.append(m)
-                if len(result) >= self.config.limit:
-                    break
+                        # 出来高・流動性フィルター
+                        volume = float(m.get("volumeNum") or m.get("volume") or 0)
+                        liquidity = float(m.get("liquidityNum") or m.get("liquidity") or 0)
+                        if volume < self.config.min_volume:
+                            continue
+                        if liquidity < self.config.min_liquidity:
+                            continue
 
-            return result
+                        # 解決日フィルター
+                        end_date = None
+                        end_date_str = m.get("endDateIso") or m.get("end_date_iso")
+                        if end_date_str:
+                            try:
+                                end_date = datetime.fromisoformat(
+                                    end_date_str.replace("Z", "+00:00")
+                                )
+                            except Exception:
+                                pass
+                        if end_date:
+                            if end_date.tzinfo is None:
+                                end_date = end_date.replace(tzinfo=timezone.utc)
+                            if end_date < cutoff:
+                                continue
+
+                        result.append(ResolvedMarket(
+                            condition_id=m.get("conditionId") or m.get("condition_id", ""),
+                            question=m.get("question", ""),
+                            yes_token_id=yes_token_id,
+                            outcome=outcome,
+                            volume=volume,
+                            liquidity=liquidity,
+                            end_date=end_date,
+                        ))
+
+                        if len(result) >= self.config.limit:
+                            break
+
+                    if len(data) < fetch_limit:
+                        break  # 最終ページ
+                    offset += fetch_limit
+                    await asyncio.sleep(0.3)
 
         except Exception as e:
             print(f"❌ マーケット取得エラー: {e}")
-            return []
+
+        return result
 
     # --------- 単一マーケットのバックテスト ---------
 
@@ -255,9 +320,8 @@ class Backtester:
             if entry_price <= 0.01 or entry_price >= 0.99:
                 return "skip"
 
-            # 解決結果
-            outcome = str(getattr(market, "outcome", "")).upper()
-            resolution = 1.0 if outcome == "YES" else 0.0
+            # 解決結果 (ResolvedMarket.outcome は既に "YES"/"NO" に正規化済み)
+            resolution = 1.0 if market.outcome == "YES" else 0.0
 
             # 解決まで何時間あったか (概算)
             hours_to_resolution = n - analysis_idx
@@ -291,8 +355,8 @@ class Backtester:
                 pnl = entry_price * size if resolution < 0.5 else -(1 - entry_price) * size
 
             return TradeRecord(
-                market_id=getattr(market, "condition_id", ""),
-                question=getattr(market, "question", "")[:80],
+                market_id=market.condition_id,
+                question=market.question[:80],
                 side=side,
                 entry_price=round(entry_price, 6),
                 resolution=resolution,
@@ -323,9 +387,9 @@ class Backtester:
             features = self.feature_extractor.extract(
                 prices=prices,
                 yes_price=yes_price,
-                market_volume=getattr(market, "volume", 0),
-                market_liquidity=getattr(market, "liquidity", 0),
-                end_date=getattr(market, "end_date", None),
+                market_volume=market.volume,
+                market_liquidity=market.liquidity,
+                end_date=market.end_date,
             )
             ml_pred = self.ml_analyst.predict(features)
             signals.append(SignalSource(
@@ -339,7 +403,7 @@ class Backtester:
         if self.llm_analyst:
             try:
                 llm_result = await self.llm_analyst.analyze_market(
-                    question=getattr(market, "question", ""),
+                    question=market.question,
                     current_price=yes_price,
                 )
                 if llm_result:
@@ -357,7 +421,7 @@ class Backtester:
         result = self.aggregator.aggregate(
             market_price=yes_price,
             signals=signals,
-            market_liquidity=getattr(market, "liquidity", 0),
+            market_liquidity=market.liquidity,
         )
 
         return {
