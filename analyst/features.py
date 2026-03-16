@@ -4,7 +4,7 @@ Feature Engineering
 - LightGBM モデル用
 """
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 import math
 
@@ -278,7 +278,8 @@ class FeatureExtractor:
         features.market_liquidity = min(1.0, market_liquidity / 500000)  # 50万で正規化
         
         if end_date:
-            days_to_resolution = (end_date - datetime.now()).total_seconds() / 86400
+            now = datetime.now(timezone.utc) if end_date.tzinfo else datetime.now()
+            days_to_resolution = (end_date - now).total_seconds() / 86400
             features.time_to_resolution = max(0, min(365, days_to_resolution)) / 365  # 1年で正規化
         
         # llm_pred / llm_conf は受け付けるが Features には含めない
