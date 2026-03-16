@@ -97,10 +97,14 @@ class OrchestratorConfig:
     # ニュース
     fetch_news: bool = True
     news_limit: int = 5
-    
+
     # ダッシュボード
     dashboard: bool = False
     dashboard_port: int = 8080
+
+    # ML自動再学習
+    auto_retrain: bool = True           # 自動再学習を有効化
+    retrain_threshold: int = 20         # 何マーケット解決ごとに再学習するか
 
 
 class Orchestrator:
@@ -159,7 +163,11 @@ class Orchestrator:
         self._running = False
         self._ws_task: Optional[asyncio.Task] = None
         self._analysis_task: Optional[asyncio.Task] = None
-        
+
+        # ML再学習管理
+        self._resolved_since_last_training: int = 0
+        self._retraining: bool = False
+
         # 統計
         self.stats = {
             "cycles": 0,
@@ -685,6 +693,15 @@ class Orchestrator:
                                 print(f"💰 マーケット解決: PnL ${pnl:+.2f}")
                                 # ファクターのPnLを後付け更新
                                 self.factor_manager.update_pnl_by_market(market_id, pnl)
+
+                            # 解決カウント更新 → ML再学習トリガー
+                            self._resolved_since_last_training += 1
+                            if (
+                                self.config.auto_retrain
+                                and not self._retraining
+                                and self._resolved_since_last_training >= self.config.retrain_threshold
+                            ):
+                                asyncio.create_task(self._retrain_ml_model())
                 except Exception as e:
                     continue  # 個別エラーは無視
                     
@@ -806,6 +823,103 @@ class Orchestrator:
         except Exception as e:
             print(f"   ❌ ファクター生成エラー: {e}")
 
+    async def _retrain_ml_model(self):
+        """
+        MLモデルをバックグラウンドで再学習してホットスワップ。
+        LightGBM学習 (CPU bound) は ThreadPoolExecutor で実行するため
+        WebSocket監視・分析ループをブロックしない。
+        """
+        self._retraining = True
+        print("\n🔄 MLモデル再学習開始 (バックグラウンド)...")
+
+        try:
+            loop = asyncio.get_running_loop()
+
+            # 1. 解決済みマーケットをAPIから取得 (ブロッキングAPIをexecutorで)
+            from client import PolyClient
+            client = PolyClient()
+            raw_markets = await loop.run_in_executor(
+                None,
+                lambda: (client.connect(read_only=True) or client.get_markets(limit=200, active=False)),
+            )
+            resolved = [
+                m for m in (raw_markets or [])
+                if getattr(m, "outcome", None) and getattr(m, "yes_token_id", None)
+            ]
+
+            if not resolved:
+                print("   ⚠️ 解決済みマーケットなし — 再学習スキップ")
+                return
+
+            print(f"   📋 解決済みマーケット: {len(resolved)}件")
+
+            # 2. 特徴量 & ラベルを収集 (価格履歴取得は非同期)
+            from analyst.features import FeatureExtractor
+            import numpy as np
+
+            extractor = FeatureExtractor()
+            X_list, y_list = [], []
+
+            for m in resolved[:100]:
+                try:
+                    price_points = await self.price_fetcher.fetch_prices(
+                        token_id=m.yes_token_id,
+                        interval="max",
+                        fidelity=60,
+                    )
+                    if len(price_points) < 10:
+                        continue
+
+                    prices = [p.price for p in price_points[:-1]]
+                    features = extractor.extract(
+                        prices=prices[-100:],
+                        yes_price=getattr(m, "yes_price", 0.5),
+                        market_volume=getattr(m, "volume", 0),
+                    )
+                    X_list.append(features.to_list())
+                    y_list.append(1 if str(m.outcome).upper() == "YES" else 0)
+                except Exception:
+                    continue
+                await asyncio.sleep(0.2)  # レート制限
+
+            if len(X_list) < 50:
+                print(f"   ⚠️ データ不足 ({len(X_list)}件 < 50件) — 再学習スキップ")
+                return
+
+            print(f"   📦 学習データ: {len(X_list)}件")
+
+            X = np.array(X_list)
+            y = np.array(y_list)
+
+            # 3. LightGBM学習 (CPU bound → executor でメインループをブロックしない)
+            from analyst.ml_analyst import MLAnalyst
+            from sklearn.model_selection import train_test_split
+            from pathlib import Path as _Path
+
+            model_path = str(_Path(__file__).parent.parent / "models" / "lgb_model.pkl")
+
+            def _train_sync():
+                X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+                analyst = MLAnalyst()
+                result = analyst.train(X_tr, y_tr, X_val, y_val)
+                analyst.save_model(model_path)
+                return result
+
+            result = await loop.run_in_executor(None, _train_sync)
+
+            auc_str = f"AUC: {result['valid_auc']:.3f}" if result.get("valid_auc") else f"trees: {result['n_estimators']}"
+            print(f"   ✅ 再学習完了 ({auc_str})")
+
+            # 4. ホットスワップ (分析中でも安全に差し替え)
+            self.analyst.reload_ml_model(model_path)
+
+            self._resolved_since_last_training = 0
+
+        except Exception as e:
+            print(f"   ❌ 再学習エラー: {e}")
+        finally:
+            self._retraining = False
+
     # ========== 期限切れトリガー清掃 ==========
 
     async def _cleanup_expired_triggers(self):
@@ -834,6 +948,8 @@ async def run_orchestrator(
     enable_exit: bool = False,
     take_profit_pct: float = 0.50,
     stop_loss_pct: float = -0.50,
+    auto_retrain: bool = True,
+    retrain_threshold: int = 20,
 ):
     """オーケストレーター実行"""
     config = OrchestratorConfig(
@@ -847,6 +963,8 @@ async def run_orchestrator(
         enable_exit=enable_exit,
         take_profit_pct=take_profit_pct,
         stop_loss_pct=stop_loss_pct,
+        auto_retrain=auto_retrain,
+        retrain_threshold=retrain_threshold,
     )
 
     orchestrator = Orchestrator(config)

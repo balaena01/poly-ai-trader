@@ -104,6 +104,16 @@ class EnsembleAnalyst:
         print(f"   LLM: {llm_model}")
         print(f"   ML: {'✓' if self.use_ml else '✗'}")
         print(f"   Orderflow: {'✓' if self.use_orderflow else '✗'}")
+
+    def reload_ml_model(self, path: str):
+        """実行中のMLモデルをホットスワップ (再学習後に呼び出す)"""
+        try:
+            new_analyst = MLAnalyst(model_path=path)
+            self.ml_analyst = new_analyst
+            self.use_ml = True
+            print(f"🔁 MLモデルをホットスワップ: {path}")
+        except Exception as e:
+            print(f"⚠️ MLモデルリロード失敗: {e}")
     
     async def analyze(
         self,

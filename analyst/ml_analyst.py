@@ -122,11 +122,20 @@ class MLAnalyst:
             "n_estimators": self.model.num_trees(),
             "best_iteration": self.model.best_iteration,
         }
-        
+
+        # 検証AUC
+        try:
+            from sklearn.metrics import roc_auc_score
+            result["train_auc"] = float(roc_auc_score(y, self.model.predict(X)))
+            if X_val is not None and y_val is not None:
+                result["valid_auc"] = float(roc_auc_score(y_val, self.model.predict(X_val)))
+        except Exception:
+            pass
+
         # 特徴量重要度
         importance = self.model.feature_importance(importance_type="gain")
         result["feature_importance"] = dict(zip(self.feature_names, importance.tolist()))
-        
+
         return result
     
     def predict(self, features: Features) -> MLPrediction:
@@ -198,10 +207,10 @@ class MLAnalyst:
         """モデルを保存"""
         if self.model is None:
             raise ValueError("モデルが未学習です")
-        
-        path = path or (self.MODEL_DIR / "lightgbm_model.txt")
+
+        path = path or str(self.MODEL_DIR / "lgb_model.pkl")
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        
+
         self.model.save_model(str(path))
         print(f"💾 モデル保存: {path}")
     
