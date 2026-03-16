@@ -187,11 +187,14 @@ class PolyClient:
                 # 同期後の実際の値を取得してログ
                 result = self._client.get_balance_allowance(params=params)
                 balance = float(result.get("balance", 0)) / 1e6 if result else 0
-                allowance_raw = result.get("allowance", 0) if result else 0
-                if int(allowance_raw) > 1e30:
+                allowances_dict = result.get("allowances", {}) if result else {}
+                if allowances_dict and any(int(v) > 1e30 for v in allowances_dict.values()):
                     allowance_str = "∞"
+                elif allowances_dict:
+                    min_a = min(float(v) / 1e6 for v in allowances_dict.values())
+                    allowance_str = f"${min_a:.2f}"
                 else:
-                    allowance_str = f"${float(allowance_raw) / 1e6:.2f}"
+                    allowance_str = "$0.00"
                 print(f"✅ Polymarket接続成功 (認証済み) balance=${balance:.2f} allowance={allowance_str}")
             except Exception as ae:
                 print(f"✅ Polymarket接続成功 (認証済み) ⚠️ 残高確認失敗: {ae}")
