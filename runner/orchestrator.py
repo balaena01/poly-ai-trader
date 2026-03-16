@@ -230,6 +230,17 @@ class Orchestrator:
             except Exception as e:
                 print(f"⚠️ 残高取得失敗: {e}")
             
+            # 既存オープンポジションを RiskManager に復元 (再起動後のエクスポージャー誤認防止)
+            open_positions = self.position_tracker.get_open_positions()
+            if open_positions:
+                for pos in open_positions:
+                    self.risk_manager.open_positions[pos.market_id] = {
+                        "symbol": pos.question[:30],
+                        "amount": pos.size,
+                    }
+                total_restored = sum(p.size for p in open_positions)
+                print(f"📂 既存ポジション復元: {len(open_positions)}件 ${total_restored:.2f} → エクスポージャー {self.risk_manager.get_exposure_ratio():.0%}")
+
             # 初回スキャン
             markets = await self._scan_markets()
             
