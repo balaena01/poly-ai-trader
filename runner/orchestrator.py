@@ -578,6 +578,13 @@ class Orchestrator:
         if yes_price_now <= 0.15 or yes_price_now >= 0.85:
             return
 
+        # 解決まで30日超のマーケットはスキップ (資金長期ロック防止)
+        end_date = getattr(market, 'end_date', None)
+        if end_date:
+            days_to_end = (end_date - datetime.now(timezone.utc)).total_seconds() / 86400
+            if days_to_end > 30:
+                return
+
         print(f"\n🧠 分析: {question[:50]}...")
 
         try:
@@ -585,14 +592,17 @@ class Orchestrator:
             news_context = ""
             if self.config.fetch_news:
                 articles = await self.news_fetcher.search(
-                    question[:50],
+                    question,
                     limit=self.config.news_limit,
                 )
                 if articles:
-                    news_context = "\n".join([
-                        f"- {a.title}" for a in articles[:3]
-                    ])
-                    print(f"   📰 ニュース: {len(articles)}件")
+                    lines = []
+                    for a in articles[:5]:
+                        line = f"- {a.title}"
+                        if a.summary:
+                            line += f"\n  {a.summary[:300]}"
+                        lines.append(line)
+                    news_context = "\n".join(lines)
             
             # 価格履歴取得 (Orderflow/ML用)
             prices = []
