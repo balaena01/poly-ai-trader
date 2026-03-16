@@ -43,11 +43,14 @@ class MLAnalyst:
         "objective": "binary",
         "metric": "auc",
         "boosting_type": "gbdt",
-        "num_leaves": 31,
+        "num_leaves": 15,           # 31→15 (過学習抑制)
         "learning_rate": 0.05,
-        "feature_fraction": 0.8,
-        "bagging_fraction": 0.8,
+        "feature_fraction": 0.7,    # 0.8→0.7
+        "bagging_fraction": 0.7,    # 0.8→0.7
         "bagging_freq": 5,
+        "min_child_samples": 30,    # 追加: 葉の最小サンプル数
+        "reg_alpha": 0.1,           # 追加: L1正則化
+        "reg_lambda": 0.1,          # 追加: L2正則化
         "verbose": -1,
         "n_estimators": 500,
         "early_stopping_rounds": 50,

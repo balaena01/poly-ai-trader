@@ -8,7 +8,9 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | chore: min_edge 0.10→0.05、min_confidence 0.60→0.50 をデフォルトに変更 |
+| (最新) | fix: LightGBM 正則化パラメータ追加 (num_leaves/reg/min_child_samples) |
+| | feat: ニュース取得をDDG+Scrapling本文フェッチに刷新 |
+| | chore: min_edge 0.10→0.05、min_confidence 0.60→0.50 をデフォルトに変更 |
 | `dafcd85` | fix: Action.value大文字小文字不一致によるトリガー誤発火・エッジ再検証スキップ修正 |
 | `be459ab` | fix: CLOB価格異常検出(0.20超乖離フォールバック) + エッジ再検証ログ強化 |
 | `465db87` | chore: requirements.txt scikit-learn追加 + TODO.md更新 |
@@ -101,6 +103,13 @@ python main.py run --live
 - [ ] **ML学習の実行** — `pip install lightgbm scikit-learn` → `python scripts/train_ml.py --days 90`
   - lookahead bias修正・マーケット取得修正済み。初回学習が必要
   - 学習後に `python scripts/backtest.py --days 90 --limit 100` でバックテスト検証
+
+- [x] **ニュース取得の改善 (Scrapling + DDG検索)** — 対応済み
+  - 現状: Google News RSSのタイトルだけをLLMに渡している (内容なし・クエリ精度低い)
+  - 対策: DDG HTML検索で実記事URLを取得 → Scrapling Fetcherで本文フェッチ → LLMに本文渡す
+  - キーワード抽出を汎用化 (固有名詞・大文字語・金額を抽出、crypto専用から脱却)
+  - JSレンダリング必要なサイトはタイトルのみにフォールバック
+  - 変更ファイル: `data_fetcher/news_fetcher.py`, `runner/orchestrator.py`, `requirements.txt`
 
 - [ ] **同一イベントへの集中リスク対策 (相関グループ管理)**
   - 現状: "GTA VI before X?" 系マーケットが複数トリガーに並ぶと実質1ポジション分のリスクになる
