@@ -436,16 +436,19 @@ class Orchestrator:
                     trigger.market_id, trigger.size, trigger.question[:30]
                 )
                 
+                # 実際の約定価格 (CLOB ask/bid に更新済みの場合はそちらを使う)
+                entry_price = result.executed_price if result.executed_price else price
+
                 # ポジション記録
                 self.position_tracker.record_trade(
                     market_id=trigger.market_id,
                     token_id=trigger.token_id,
                     question=trigger.question,
                     side=trigger.side,
-                    entry_price=price,
+                    entry_price=entry_price,
                     size=trigger.size,
                 )
-                
+
                 # ファクター記録 (アクティブファクターがあれば)
                 active_factors = self.factor_manager.get_active_factors()
                 if active_factors:
@@ -453,7 +456,7 @@ class Orchestrator:
                     self.factor_manager.record_trade(
                         factor_id=factor.hypothesis.id,
                         pnl=0,           # 解決後に update_pnl_by_market() で更新
-                        entry_price=price,
+                        entry_price=entry_price,
                         market_id=trigger.market_id,
                     )
 
