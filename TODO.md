@@ -8,7 +8,8 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | 設計レベル2件修正: ML独立化 + 構造化ログ |
+| (最新) | feat: エンドツーエンドバックテスト基盤実装 |
+| `aa70b41` | 設計レベル2件修正: ML独立化 + 構造化ログ |
 | `fdf5dc4` | トレードロジック 高・中バグ8件修正 |
 | `c343fc6` | 深刻度「中」バグ4件修正 (Auditor/タイムゾーン等) |
 | `ebc5957` | README・ROADMAP 全面更新 |
@@ -50,9 +51,11 @@
 
 - [x] **実運用ログの整備** — 対応済み (`data/trade_log.jsonl`)
 
-- [ ] **バックテスト基盤**
-  - 過去の解決済みマーケットデータで戦略全体をバックテストできる仕組みがない
-  - factor/backtester.py は個別ファクター用。エンド・ツー・エンドのバックテストは未実装
+- [x] **バックテスト基盤** — 対応済み (`scripts/backtest.py`)
+  - 解決済みマーケットを取得し、分析ポイント以前の価格のみでシグナル生成 (lookahead 防止)
+  - ML + (optional LLM) + Bayesian 統合 → Quarter Kelly サイジング → PnL 計算
+  - メトリクス: 勝率, ROI, Sharpe, 最大ドローダウン / `data/backtest_results.json` 保存
+  - `python scripts/backtest.py --days 90 --limit 100 [--use-llm] [--min-edge 0.15]`
 
 - [ ] **ポジション管理 UI の強化**
   - ダッシュボードにポジション一覧 (エントリー価格・含み損益) を追加したい
@@ -97,7 +100,8 @@ poly-ai-trader/
 ├── dashboard/
 │   └── server.py        # FastAPI + WebSocket UI
 ├── scripts/
-│   └── train_ml.py      # 手動ML学習
+│   ├── train_ml.py      # 手動ML学習
+│   └── backtest.py      # エンドツーエンドバックテスト
 └── models/
     └── lgb_model.pkl    # 学習済みモデル (自動再学習で上書き)
 ```
@@ -128,4 +132,6 @@ python main.py run --no-dashboard         # ダッシュボードなし
 python main.py run --no-retrain           # ML自動再学習無効
 python main.py run --enable-exit          # 利確・損切り有効
 python scripts/train_ml.py --days 30      # 手動ML学習
+python scripts/backtest.py --days 90     # バックテスト (MLのみ)
+python scripts/backtest.py --use-llm     # バックテスト (ML + LLM)
 ```
