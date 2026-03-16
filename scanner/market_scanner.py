@@ -184,113 +184,107 @@ class MarketScanner:
         min_volume: float = 50_000,
     ) -> List[MarketData]:
         """
-        BTC/ETH 関連マーケットを取得
-
-        Args:
-            keywords: 検索キーワード (デフォルト: BTC, ETH, Bitcoin, Ethereum)
-            limit: 最大件数
-            min_liquidity: 最低流動性フィルター ($)
-            min_volume: 最低出来高フィルター ($)
+        アクティブマーケットを出来高順に取得してフィルタリング。
+        キーワード検索はPolymarketの質問文と一致しないため廃止。
         """
-        if keywords is None:
-            keywords = [
-                "BTC", "Bitcoin", "ETH", "Ethereum", "crypto",
-                "NBA", "NFL", "soccer", "tennis", "UFC",
-                "temperature", "weather",
-                "Oscar", "Grammy", "award",
-                "election", "Trump", "Fed",
-            ]
-        
         markets = []
-        
+        offset = 0
+        fetch_per_page = 100
+        max_pages = 10
+        now = datetime.now(timezone.utc)
+
         async with httpx.AsyncClient() as client:
-            for kw in keywords:
+            for _ in range(max_pages):
+                if len(markets) >= limit:
+                    break
                 try:
                     resp = await client.get(
                         f"{GAMMA_API}/markets",
                         params={
-                            "_q": kw,
-                            "limit": 20,  # キーワードごとに固定20件取得、フィルター後にlimitで絞る
                             "active": "true",
-                            "closed": "false",  # 終了済みマーケット除外
+                            "closed": "false",
+                            "limit": fetch_per_page,
+                            "offset": offset,
+                            "order": "volume",
+                            "ascending": "false",
                         }
                     )
                     resp.raise_for_status()
                     data = resp.json()
-                    
+                    if not data:
+                        break
+
                     for m in data:
-                        # 終了済みスキップ
                         if m.get("closed", False):
                             continue
-                        
-                        # トークンID抽出 (clobTokenIds から)
+
+                        # トークンID
                         clob_ids = m.get("clobTokenIds", "[]")
                         try:
                             token_ids = json.loads(clob_ids) if isinstance(clob_ids, str) else clob_ids
                         except:
                             token_ids = []
-                        
                         yes_token_id = token_ids[0] if token_ids else ""
                         no_token_id = token_ids[1] if len(token_ids) > 1 else None
-                        
                         if not yes_token_id:
                             continue
-                        
-                        # 価格抽出 (outcomePrices から)
+
+                        # 価格
                         outcome_prices = m.get("outcomePrices", "[\"0.5\", \"0.5\"]")
                         try:
                             prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
                             yes_price = float(prices[0]) if prices else 0.5
                         except:
                             yes_price = 0.5
-                        
-                        # 終了日時をパース
+
+                        # 終了日時
                         end_date = None
                         end_date_str = m.get("endDateIso") or m.get("end_date_iso")
                         if end_date_str:
                             try:
-                                end_date = datetime.fromisoformat(
-                                    end_date_str.replace("Z", "+00:00")
-                                )
+                                end_date = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
                             except:
                                 pass
-                        
+
+                        # end_dateなし・30日超は除外
+                        if not end_date:
+                            continue
+                        ed = end_date if end_date.tzinfo else end_date.replace(tzinfo=timezone.utc)
+                        if (ed - now).total_seconds() / 86400 > 30:
+                            continue
+
+                        volume = float(m.get("volumeNum") or m.get("volume", 0) or 0)
+                        liquidity = float(m.get("liquidityNum") or m.get("liquidity", 0) or 0)
+
+                        if liquidity < min_liquidity or volume < min_volume:
+                            continue
+
                         market = MarketData(
                             market_id=m.get("conditionId") or m.get("condition_id", ""),
                             question=m.get("question", ""),
                             yes_token_id=yes_token_id,
                             no_token_id=no_token_id,
                             yes_price=yes_price,
-                            volume=float(m.get("volumeNum") or m.get("volume", 0) or 0),
-                            liquidity=float(m.get("liquidityNum") or m.get("liquidity", 0) or 0),
-                            end_date=end_date,
+                            volume=volume,
+                            liquidity=liquidity,
+                            end_date=ed,
                         )
-                        
-                        # 流動性・出来高フィルター
-                        if market.liquidity < min_liquidity:
-                            continue
-                        if market.volume < min_volume:
-                            continue
 
-                        # end_dateなし・30日超は除外 (before GTA VI等の長期・無期限マーケット)
-                        if not market.end_date:
-                            continue
-                        ed = market.end_date
-                        if ed.tzinfo is None:
-                            ed = ed.replace(tzinfo=timezone.utc)
-                        if (ed - datetime.now(timezone.utc)).total_seconds() / 86400 > 30:
-                            continue
-
-                        # 重複チェック
                         if market.market_id not in [x.market_id for x in markets]:
                             markets.append(market)
 
+                        if len(markets) >= limit:
+                            break
+
+                    if len(data) < fetch_per_page:
+                        break
+                    offset += fetch_per_page
+
                 except Exception as e:
-                    print(f"マーケット取得エラー ({kw}): {e}")
+                    print(f"マーケット取得エラー: {e}")
+                    break
 
-        # ボリューム順でソート
         markets.sort(key=lambda x: x.volume, reverse=True)
-
         return markets[:limit]
     
     # ========== 指標計算 ==========

@@ -8,7 +8,7 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | feat: スキャナーキーワードをスポーツ・天気・アワード等に拡張 |
+| (最新) | refactor: スキャナーをキーワード検索→全件取得+フィルタリング方式に変更 |
 | | fix: main.py CLIデフォルト修正 (model→sonnet-4-6, min-edge→0.05) |
 | | fix: LLM JSON解析エラー対策 (_parse_llm_json で正規表現フォールバック追加) |
 | | fix: LightGBM 正則化パラメータ追加 (num_leaves/reg/min_child_samples) |
