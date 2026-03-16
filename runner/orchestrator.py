@@ -1095,7 +1095,7 @@ class Orchestrator:
             X_list, y_list = [], []
 
             async with _httpx.AsyncClient(timeout=_timeout) as hclient:
-                for m in resolved[:150]:
+                for m in resolved:
                     try:
                         price_points = await self.price_fetcher.fetch_prices(
                             token_id=m["yes_token_id"],
@@ -1169,7 +1169,7 @@ class Orchestrator:
             model_path = str(_Path(__file__).parent.parent / "models" / "lgb_model.pkl")
 
             def _train_sync():
-                X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+                X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y if len(set(y.tolist())) > 1 else None)
                 analyst = MLAnalyst()
                 result = analyst.train(X_tr, y_tr, X_val, y_val)
                 analyst.save_model(model_path)
