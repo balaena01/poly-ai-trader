@@ -8,7 +8,10 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: BUY_NO価格逆転バグ修正 (NOトークンask→YES換算) |
+| (最新) | fix: ML学習データ lookahead bias修正 + マーケット取得ロジック統一 |
+| `d012a76` | fix: バックテスト マーケット取得ロジック全面修正 |
+| `406f552` | fix: バックテスト マーケット取得が0件のまま無限ループする問題を修正 |
+| `1049ba2` | fix: BUY_NO価格逆転バグ修正 (NOトークンask→YES換算) |
 | `51fc0af` | fix: CLOB残高取得 + FOK注文 + ask/bid実価格取得 |
 | `7bedd32` | fix: Whale動的閾値 + executor RiskManager二重計算修正 |
 | `97bffae` | fix: トリガー発火時エッジ再検証 + exit後の再エントリー修正 |
@@ -64,6 +67,12 @@
 ---
 
 ## 今後やりたいこと (バックログ)
+
+- [ ] **ML学習の実行** — `pip install lightgbm scikit-learn` → `python scripts/train_ml.py --days 90`
+  - lookahead bias修正・マーケット取得修正済み。初回学習が必要
+  - 学習後に `python scripts/backtest.py --days 90 --limit 100` でバックテスト検証
+
+
 
 - [x] **実運用ログの整備** — 対応済み (`data/trade_log.jsonl`)
 
