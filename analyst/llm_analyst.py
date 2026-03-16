@@ -6,6 +6,7 @@ LLM Analyst
 """
 import os
 import json
+import re
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
@@ -161,6 +162,39 @@ class LLMAnalyst:
         
         print(f"🤖 LLM: {self.model}")
     
+    def _parse_llm_json(self, content: str) -> Optional[dict]:
+        """LLMレスポンスからJSONを抽出。コードブロック・正規表現をフォールバックに使用。"""
+        if not content or not content.strip():
+            return None
+        text = content.strip()
+        # コードブロック除去
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+        # 通常のJSONパース
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+        # { } の範囲を抽出して再試行
+        m = re.search(r'\{[^{}]*\}', text, re.DOTALL)
+        if m:
+            try:
+                return json.loads(m.group())
+            except Exception:
+                pass
+        # 正規表現で probability / confidence だけ抽出
+        prob = re.search(r'"probability"\s*:\s*([0-9.]+)', text)
+        conf = re.search(r'"confidence"\s*:\s*([0-9.]+)', text)
+        if prob:
+            return {
+                "probability": float(prob.group(1)),
+                "confidence": float(conf.group(1)) if conf else 0.5,
+                "reasoning": "",
+            }
+        return None
+
     async def analyze_market(
         self,
         question: str,
@@ -217,12 +251,7 @@ JSON形式で回答してください。
             content = response.choices[0].message.content
             
             # JSON抽出
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0]
-            elif "```" in content:
-                content = content.split("```")[1].split("```")[0]
-            
-            return json.loads(content.strip())
+            return self._parse_llm_json(content)
             
         except Exception as e:
             print(f"LLM分析エラー: {e}")
@@ -241,9 +270,7 @@ JSON形式で回答してください。
                         max_tokens=500,
                     )
                     content = response.choices[0].message.content
-                    if "```json" in content:
-                        content = content.split("```json")[1].split("```")[0]
-                    return json.loads(content.strip())
+                    return self._parse_llm_json(content)
                 except Exception as e2:
                     print(f"フォールバックも失敗: {e2}")
             
