@@ -179,7 +179,7 @@ class MarketScanner:
     async def get_crypto_markets(
         self,
         keywords: List[str] = None,
-        limit: int = 50,
+        limit: int = 100,
         min_liquidity: float = 10_000,
         min_volume: float = 50_000,
     ) -> List[MarketData]:
