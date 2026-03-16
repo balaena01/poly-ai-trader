@@ -518,15 +518,11 @@ class Orchestrator:
                 if self.stats["cycles"] % 10 == 0:
                     markets = await self._scan_markets()
                 
-                # 各マーケットを分析 (サイクルごとのトリガー上限を適用)
+                # 各マーケットを分析 (エクスポージャー上限はRiskManagerが管理)
                 self._triggers_this_cycle = 0
                 for market in markets:
                     if not self._running:
                         break
-                    if self._triggers_this_cycle >= self.config.max_trades_per_cycle:
-                        print(f"   ⏸️ トリガー上限到達 ({self.config.max_trades_per_cycle}件/サイクル)")
-                        break
-
                     await self._analyze_market(market)
                 
                 # 解決済みマーケットをチェック
