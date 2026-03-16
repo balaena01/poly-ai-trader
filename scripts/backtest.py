@@ -380,7 +380,7 @@ class Backtester:
             entry_price = history[-1]
 
             # 価格が極端な場合はスキップ (解決直前のデータ汚染 / 長射程マーケット)
-            if entry_price <= 0.05 or entry_price >= 0.95:
+            if entry_price <= 0.15 or entry_price >= 0.85:
                 return "skip"
 
             # 解決結果 (ResolvedMarket.outcome は既に "YES"/"NO" に正規化済み)

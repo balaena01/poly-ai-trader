@@ -573,9 +573,9 @@ class Orchestrator:
         
         question = getattr(market, 'question', str(market))
 
-        # 5%未満・95%超の長射程マーケットはスキップ (学習データと一致させる)
+        # 15%未満・85%超の長射程マーケットはスキップ (学習データと一致させる)
         yes_price_now = getattr(market, 'yes_price', 0.5)
-        if yes_price_now <= 0.05 or yes_price_now >= 0.95:
+        if yes_price_now <= 0.15 or yes_price_now >= 0.85:
             return
 
         print(f"\n🧠 分析: {question[:50]}...")
@@ -1118,7 +1118,7 @@ class Orchestrator:
                         yes_price = history[-1]
 
                         # 価格が極端な場合はスキップ (解決直前データ汚染 / 長射程マーケット)
-                        if yes_price <= 0.05 or yes_price >= 0.95:
+                        if yes_price <= 0.15 or yes_price >= 0.85:
                             continue
 
                         # 取引履歴

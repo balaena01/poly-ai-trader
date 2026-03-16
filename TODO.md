@@ -8,7 +8,7 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: Bayesian min_confidence 0.5→0.1、LightGBM accuracy 0.55→0.72 (シグナル0件バグ修正) |
+| (最新) | fix: yes_price フィルターを0.05→0.15/0.95→0.85に強化 (低価格帯長射程除外) |
 | `dafcd85` | fix: Action.value大文字小文字不一致によるトリガー誤発火・エッジ再検証スキップ修正 |
 | `be459ab` | fix: CLOB価格異常検出(0.20超乖離フォールバック) + エッジ再検証ログ強化 |
 | `465db87` | chore: requirements.txt scikit-learn追加 + TODO.md更新 |
