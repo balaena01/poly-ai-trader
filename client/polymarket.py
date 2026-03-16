@@ -422,11 +422,17 @@ class PolyClient:
         2. オンチェーン Web3 — proxy walletのUSDC残高 (fallback)
         """
         # ── 1. CLOB API (最も正確) ──────────────────────────────────────────
+        # get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
+        # でPolymarket内のUSDC残高を取得する
         if self._authenticated and self._client:
             try:
-                balance = self._client.get_balance()
-                if balance is not None:
-                    return float(balance)
+                from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+                params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+                result = self._client.get_balance_allowance(params)
+                if result and "balance" in result:
+                    balance_str = result["balance"]
+                    # Polymarketの残高はUSDC(6 decimals)
+                    return float(balance_str) / 1e6
             except Exception:
                 pass  # CLOBで取れなければWeb3にフォールバック
 
