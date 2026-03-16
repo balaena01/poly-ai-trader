@@ -84,8 +84,8 @@ class OrchestratorConfig:
     max_markets: int = 10
 
     # マーケット品質フィルター
-    min_liquidity: float = 10_000   # 最低流動性 $10k (低流動性マーケットはスプレッド広すぎ)
-    min_volume: float = 50_000      # 最低出来高 $50k
+    min_liquidity: float = 5_000    # 最低流動性 $5k
+    min_volume: float = 10_000      # 最低出来高 $10k
     
     # 実行
     mode: RunMode = RunMode.DRY_RUN

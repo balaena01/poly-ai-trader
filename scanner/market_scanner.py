@@ -180,8 +180,8 @@ class MarketScanner:
         self,
         keywords: List[str] = None,
         limit: int = 100,
-        min_liquidity: float = 10_000,
-        min_volume: float = 50_000,
+        min_liquidity: float = 5_000,
+        min_volume: float = 10_000,
     ) -> List[MarketData]:
         """
         アクティブマーケットを出来高順に取得してフィルタリング。
@@ -329,8 +329,8 @@ class MarketScanner:
     
     async def scan(
         self,
-        min_liquidity: float = 10_000,
-        min_volume: float = 50_000,
+        min_liquidity: float = 5_000,
+        min_volume: float = 10_000,
     ) -> ScanResult:
         """
         フルスキャン実行
