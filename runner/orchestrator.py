@@ -605,6 +605,13 @@ class Orchestrator:
             print(f"   ⏭️ スキップ (期限 {days_left:.1f}日): {question[:40]}")
             return
 
+        # エクスポージャー上限チェック (既存トリガーがない新規マーケットはLLM分析をスキップ)
+        if not existing_trigger:
+            exposure_ratio = self.risk_manager.get_exposure_ratio()
+            if exposure_ratio >= self.risk_manager.max_total_exposure:
+                print(f"   ⏭️ スキップ (エクスポージャー上限 {exposure_ratio:.0%}/{self.risk_manager.max_total_exposure:.0%}): {question[:40]}")
+                return
+
         print(f"\n🧠 分析: {question[:50]}...")
 
         try:
