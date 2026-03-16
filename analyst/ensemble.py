@@ -245,10 +245,10 @@ class EnsembleAnalyst:
         edge = bayesian_result.edge
         confidence = bayesian_result.confidence
         
-        if edge > 0.10:
+        if edge > 0:
             action = Action.BUY_YES
             token_id = market.yes_token_id
-        elif edge < -0.10:
+        elif edge < 0:
             action = Action.BUY_NO
             token_id = market.no_token_id or market.yes_token_id
         else:
