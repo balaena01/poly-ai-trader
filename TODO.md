@@ -86,7 +86,9 @@ rm data/trade_log.jsonl
 ls models/lgb_model.pkl
 
 # 4. 本番起動
-python main.py run --live --enable-exit
+python main.py run --live
+# ※ --enable-exit は不要 (Polymarketは解決まで持つのが基本戦略。
+#    途中売却はスプレッド二重払い+流動性リスクあり)
 ```
 
 > ⚠️ `data/positions.json` を消さずに `--live` にすると dry run のポジションが引き継がれ、
