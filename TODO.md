@@ -79,7 +79,7 @@ poly-ai-trader/
 │   ├── orderflow.py     # クジラ/流動性/クラスタ検出
 │   ├── bayesian.py      # Bayesian統合 (market_liquidity対応済み)
 │   ├── ensemble.py      # 全シグナル統合
-│   └── features.py      # 30特徴量 (buy_volume_ratio等 修正済み)
+│   └── features.py      # 28特徴量 (LLM特徴量除去済み・buy_volume_ratio等)
 ├── risk/
 │   ├── risk_manager.py  # Kelly/ドローダウン/連敗管理
 │   └── auditor.py       # ハルシネーション/流動性チェック
