@@ -8,7 +8,9 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | feat: ダッシュボード Open Positions パネル追加 |
+| (最新) | fix: トリガー発火時エッジ再検証 + exit後の再エントリー修正 |
+| `1a2fa78` | feat: Open Positions パネルのデザインを刷新 |
+| `f2d743e` | feat: ダッシュボード Open Positions パネル追加 |
 | `6b23e62` | fix: ML再学習 volume データ修正 + Gamma API 直接取得 |
 | `4b2fdbd` | feat: エンドツーエンドバックテスト基盤実装 |
 | `aa70b41` | 設計レベル2件修正: ML独立化 + 構造化ログ |
@@ -22,6 +24,16 @@
 ---
 
 ## 未対応バグ・懸念点
+
+### 高優先度
+
+- [x] **⑫ 発火時のエッジ再検証なし** (`runner/orchestrator.py` `_execute_trigger`) — 対応済み
+  - シグナル生成 → トリガー発火まで数時間経過し、相場が動いてエッジが消えても約定していた
+  - 対策: `TriggerCondition` に `signal_probability` を追加。発火時に現在価格と比較し、エッジが `min_edge × 0.5` 未満なら `trigger_cancelled` ログを出してキャンセル
+
+- [x] **⑬ exit後の再エントリー不可** (`runner/orchestrator.py` `executed_markets`) — 対応済み
+  - take-profit/stop-loss でポジションをクローズ後も `executed_markets` に残り続け、同マーケットへの再エントリーが永久にブロックされていた
+  - 対策: `_check_position_exits()` で `close_position()` 成功時に `executed_markets` から当該 `market_id` を削除
 
 ### 低優先度
 

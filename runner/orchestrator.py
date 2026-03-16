@@ -47,6 +47,7 @@ class TriggerCondition:
     target_price: float  # この価格条件で発火 (YES価格ベース)
     size: float
     signal_confidence: float
+    signal_probability: float = 0.5  # シグナル生成時のモデル確率推定 (発火時エッジ再検証用)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: Optional[datetime] = None
 
@@ -364,7 +365,36 @@ class Orchestrator:
         # 既に実行済みならスキップ
         if trigger.market_id in self.executed_markets:
             return
-        
+
+        # ─── 発火時エッジ再検証 ────────────────────────────────────────────
+        # シグナル生成後に相場が動いてエッジが消滅していないかをチェック。
+        # BUY_YES: モデルが YES を過小評価と判断 → edge = signal_prob - current_price
+        # BUY_NO : モデルが NO を過小評価と判断 → edge = current_price - signal_prob
+        #           (YES が高い = NO が安い ほどエッジが大きい)
+        # SELL系 : ポジション決済なので常に通す
+        if trigger.side in ("BUY_YES", "BUY_NO"):
+            if trigger.side == "BUY_YES":
+                current_edge = trigger.signal_probability - price
+            else:
+                current_edge = price - trigger.signal_probability
+
+            min_viable_edge = self.config.min_edge * 0.5  # シグナル閾値の50%まで許容
+            if current_edge < min_viable_edge:
+                print(f"   ⚪ 発火キャンセル: エッジ消滅 (現在エッジ {current_edge:+.1%} < 閾値 {min_viable_edge:.1%})")
+                self._log_event("trigger_cancelled", {
+                    "market_id": trigger.market_id,
+                    "question": trigger.question[:60],
+                    "side": trigger.side,
+                    "signal_probability": round(trigger.signal_probability, 6),
+                    "current_price": round(price, 6),
+                    "current_edge": round(current_edge, 6),
+                    "min_viable_edge": round(min_viable_edge, 6),
+                })
+                del self.active_triggers[trigger.watch_token_id]
+                self.risk_manager.remove_pending_exposure(trigger.size)
+                return
+        # ─────────────────────────────────────────────────────────────────────
+
         try:
             # 実行
             result = await self.executor.execute_order(
@@ -709,6 +739,7 @@ class Orchestrator:
             target_price=target_price,
             size=size,
             signal_confidence=signal.confidence,
+            signal_probability=signal.final_probability,
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=_trigger_expiry_minutes),
         )
         
@@ -850,11 +881,14 @@ class Orchestrator:
                         exit_price=yes_price,
                         realized_pnl=realized_pnl,
                     )
-                    
+
                     # RiskManager からオープンポジション削除
                     if pos.market_id in self.risk_manager.open_positions:
                         del self.risk_manager.open_positions[pos.market_id]
-                    
+
+                    # executed_markets から削除 → 再エントリーを許可
+                    self.executed_markets.discard(pos.market_id)
+
                     print(f"   ✅ {reason_jp}完了: ${realized_pnl:+.2f}")
                 else:
                     print(f"   ❌ {reason_jp}失敗: {result.message}")
