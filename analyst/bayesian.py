@@ -59,7 +59,7 @@ class BayesianAggregator:
         self,
         market_weight: float = 0.3,     # マーケット価格の重み
         signal_weight: float = 0.7,     # シグナルの重み
-        min_confidence: float = 0.5,    # 最小信頼度
+        min_confidence: float = 0.1,    # 最小信頼度 (ML confidence = abs(prob-0.5)*2 なので0.5は高すぎる)
     ):
         """
         初期化

@@ -208,7 +208,7 @@ class EnsembleAnalyst:
                 name="LightGBM",
                 probability=ml_prob,
                 confidence=ml_conf,
-                accuracy=0.55,  # LLMを特徴量として含むため独立性を割り引く
+                accuracy=0.72,  # Valid AUC に合わせて設定
             ))
         
         # ========== Orderflow 分析 ==========

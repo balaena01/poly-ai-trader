@@ -459,7 +459,7 @@ class Backtester:
                 name="LightGBM",
                 probability=ml_pred.probability,
                 confidence=ml_pred.confidence,
-                accuracy=0.55,
+                accuracy=0.72,  # Valid AUC に合わせて設定
             ))
 
         # LLM シグナル (オプション)

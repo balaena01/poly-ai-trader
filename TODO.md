@@ -8,7 +8,7 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: 本番 _analyze_market にもyes_price 5%-95%フィルター追加 |
+| (最新) | fix: Bayesian min_confidence 0.5→0.1、LightGBM accuracy 0.55→0.72 (シグナル0件バグ修正) |
 | `dafcd85` | fix: Action.value大文字小文字不一致によるトリガー誤発火・エッジ再検証スキップ修正 |
 | `be459ab` | fix: CLOB価格異常検出(0.20超乖離フォールバック) + エッジ再検証ログ強化 |
 | `465db87` | chore: requirements.txt scikit-learn追加 + TODO.md更新 |
