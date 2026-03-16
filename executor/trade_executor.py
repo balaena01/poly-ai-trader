@@ -339,8 +339,10 @@ class TradeExecutor:
             try:
                 live_price = self._client.get_price(token_id, side=quote_side)
                 if live_price:
-                    print(f"   📈 約定価格更新: {price:.4f} → {live_price:.4f} (CLOB {quote_side})")
-                    price = live_price
+                    is_no_side = side.upper() in ("BUY_NO", "SELL_NO")
+                    adjusted_price = (1 - live_price) if is_no_side else live_price
+                    print(f"   📈 約定価格更新: {price:.4f} → {adjusted_price:.4f} (CLOB {quote_side}{'→YES換算' if is_no_side else ''})")
+                    price = adjusted_price
             except Exception:
                 pass  # 取得失敗時はWebSocket価格で続行
         # ─────────────────────────────────────────────────────────────────

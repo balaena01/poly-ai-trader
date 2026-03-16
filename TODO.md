@@ -8,7 +8,8 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: CLOB残高取得 + FOK注文 + ask/bid実価格取得 |
+| (最新) | fix: BUY_NO価格逆転バグ修正 (NOトークンask→YES換算) |
+| `51fc0af` | fix: CLOB残高取得 + FOK注文 + ask/bid実価格取得 |
 | `7bedd32` | fix: Whale動的閾値 + executor RiskManager二重計算修正 |
 | `97bffae` | fix: トリガー発火時エッジ再検証 + exit後の再エントリー修正 |
 | `1a2fa78` | feat: Open Positions パネルのデザインを刷新 |
