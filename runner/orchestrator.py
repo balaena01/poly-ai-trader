@@ -78,9 +78,13 @@ class OrchestratorConfig:
     """設定"""
     # 分析
     llm_model: str = "claude-haiku-4-5-20251001"
-    min_edge: float = 0.10
+    min_edge: float = 0.15          # 0.10 → 0.15 (低品質シグナル削減)
     min_confidence: float = 0.60
     max_markets: int = 10
+
+    # マーケット品質フィルター
+    min_liquidity: float = 10_000   # 最低流動性 $10k (低流動性マーケットはスプレッド広すぎ)
+    min_volume: float = 50_000      # 最低出来高 $50k
     
     # 実行
     mode: RunMode = RunMode.DRY_RUN
@@ -280,7 +284,10 @@ class Orchestrator:
     async def _scan_markets(self) -> List:
         """マーケットスキャン"""
         print("🔍 マーケットスキャン中...")
-        result = await self.scanner.scan()
+        result = await self.scanner.scan(
+            min_liquidity=self.config.min_liquidity,
+            min_volume=self.config.min_volume,
+        )
 
         # BTC/ETH価格をキャッシュ
         if result.btc_price:
@@ -1213,6 +1220,8 @@ async def run_orchestrator(
     stop_loss_pct: float = -0.50,
     auto_retrain: bool = True,
     retrain_threshold: int = 20,
+    min_liquidity: float = 10_000,
+    min_volume: float = 50_000,
 ):
     """オーケストレーター実行"""
     config = OrchestratorConfig(
@@ -1228,6 +1237,8 @@ async def run_orchestrator(
         stop_loss_pct=stop_loss_pct,
         auto_retrain=auto_retrain,
         retrain_threshold=retrain_threshold,
+        min_liquidity=min_liquidity,
+        min_volume=min_volume,
     )
 
     orchestrator = Orchestrator(config)

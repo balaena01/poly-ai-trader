@@ -180,13 +180,17 @@ class MarketScanner:
         self,
         keywords: List[str] = None,
         limit: int = 50,
+        min_liquidity: float = 10_000,
+        min_volume: float = 50_000,
     ) -> List[MarketData]:
         """
         BTC/ETH 関連マーケットを取得
-        
+
         Args:
             keywords: 検索キーワード (デフォルト: BTC, ETH, Bitcoin, Ethereum)
             limit: 最大件数
+            min_liquidity: 最低流動性フィルター ($)
+            min_volume: 最低出来高フィルター ($)
         """
         if keywords is None:
             keywords = ["BTC", "Bitcoin", "ETH", "Ethereum", "crypto"]
@@ -256,16 +260,22 @@ class MarketScanner:
                             end_date=end_date,
                         )
                         
+                        # 流動性・出来高フィルター
+                        if market.liquidity < min_liquidity:
+                            continue
+                        if market.volume < min_volume:
+                            continue
+
                         # 重複チェック
                         if market.market_id not in [x.market_id for x in markets]:
                             markets.append(market)
-                            
+
                 except Exception as e:
                     print(f"マーケット取得エラー ({kw}): {e}")
-        
+
         # ボリューム順でソート
         markets.sort(key=lambda x: x.volume, reverse=True)
-        
+
         return markets[:limit]
     
     # ========== 指標計算 ==========
@@ -307,19 +317,28 @@ class MarketScanner:
     
     # ========== スキャン実行 ==========
     
-    async def scan(self) -> ScanResult:
+    async def scan(
+        self,
+        min_liquidity: float = 10_000,
+        min_volume: float = 50_000,
+    ) -> ScanResult:
         """
         フルスキャン実行
-        
-        Returns:
-            ScanResult
+
+        Args:
+            min_liquidity: 最低流動性フィルター ($)
+            min_volume: 最低出来高フィルター ($)
         """
         print(f"\n🔍 スキャン開始: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
+        print(f"   フィルター: 流動性>${min_liquidity:,.0f} / 出来高>${min_volume:,.0f}")
+
         # 並列で取得
         btc_task = self.get_binance_price("BTCUSDT")
         eth_task = self.get_binance_price("ETHUSDT")
-        markets_task = self.get_crypto_markets()
+        markets_task = self.get_crypto_markets(
+            min_liquidity=min_liquidity,
+            min_volume=min_volume,
+        )
         
         btc_price, eth_price, markets = await asyncio.gather(
             btc_task, eth_task, markets_task
