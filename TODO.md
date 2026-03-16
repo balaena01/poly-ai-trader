@@ -8,6 +8,7 @@
 
 | コミット | 内容 |
 |---|---|
+| (最新) | 設計レベル2件修正: ML独立化 + 構造化ログ |
 | `fdf5dc4` | トレードロジック 高・中バグ8件修正 |
 | `c343fc6` | 深刻度「中」バグ4件修正 (Auditor/タイムゾーン等) |
 | `ebc5957` | README・ROADMAP 全面更新 |
@@ -31,27 +32,23 @@
   - 値が乖離した場合にどちらが優先されるか不明
   - 対策案: executor は risk_manager の値を参照するよう統一
 
-### 設計レベル (要検討・手を入れるか判断待ち)
+### 設計レベル
 
-- [ ] **Bayesian二重カウントの根本解決**
-  - LLMの確率を LightGBM の特徴量 (`llm_prediction`) として使っているため
-    Bayesian集計でLLMが二重にカウントされている
-  - 暫定対応済み: LightGBM accuracy を 0.60→0.55 に引き下げ (`fdf5dc4`)
-  - 根本解決: LLM特徴量を ML から除外し完全独立にする
-    → モデル再学習が必要。運用データが溜まってから検討
+- [x] **Bayesian二重カウントの根本解決** — 対応済み
+  - `llm_prediction` / `llm_confidence` を Features から削除 (28特徴量に)
+  - ML は価格・ボリューム・オーダーブックのみで予測。LLM は Bayesian で独立シグナル
+  - `generate_sample_data()` のラベル生成ロジックも LLM 依存を除去
 
-- [ ] **トリガー即時発火の約定率**
-  - `target_price = current_price` に変更済み (`fdf5dc4`)
-  - WebSocketの価格更新タイミング次第で「シグナル生成から発火まで数分」のラグが発生しうる
-  - 監視: 約定率・スリッページをログで確認
+- [x] **トリガー約定率・スリッページ監視** — 対応済み
+  - `data/trade_log.jsonl` への構造化ログ実装
+  - `signal_generated` / `trigger_set` / `trigger_fired` / `trigger_expired` / `market_resolved` を記録
+  - `trigger_fired` にスリッページ (絶対値・%) と発火までの秒数を記録
 
 ---
 
 ## 今後やりたいこと (バックログ)
 
-- [ ] **実運用ログの整備**
-  - 現在は print() のみ。ファイルへの構造化ログ (JSON Lines) がほしい
-  - シグナル・トリガー・約定・解決を1行1レコードで残す
+- [x] **実運用ログの整備** — 対応済み (`data/trade_log.jsonl`)
 
 - [ ] **バックテスト基盤**
   - 過去の解決済みマーケットデータで戦略全体をバックテストできる仕組みがない

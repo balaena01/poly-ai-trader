@@ -11,7 +11,12 @@ import math
 
 @dataclass
 class Features:
-    """特徴量セット (30特徴量)"""
+    """特徴量セット (28特徴量)
+
+    LLM予測確率・信頼度は含まない。
+    LLM は Bayesian 統合で独立シグナルとして扱うため ML 特徴量から除外し
+    二重カウントを防ぐ。
+    """
     timestamp: datetime
     
     # ========== 価格モメンタム (8) ==========
@@ -52,10 +57,6 @@ class Features:
     market_liquidity: float = 0     # 流動性
     time_to_resolution: float = 0   # 解決までの時間 (日)
     
-    # ========== 外部シグナル (2) ==========
-    llm_prediction: float = 0       # LLM予測確率
-    llm_confidence: float = 0       # LLM信頼度
-    
     def to_dict(self) -> Dict[str, float]:
         """辞書に変換"""
         return {
@@ -92,9 +93,6 @@ class Features:
             "market_volume_24h": self.market_volume_24h,
             "market_liquidity": self.market_liquidity,
             "time_to_resolution": self.time_to_resolution,
-            # LLM
-            "llm_prediction": self.llm_prediction,
-            "llm_confidence": self.llm_confidence,
         }
     
     def to_list(self) -> List[float]:
@@ -283,12 +281,9 @@ class FeatureExtractor:
             days_to_resolution = (end_date - datetime.now()).total_seconds() / 86400
             features.time_to_resolution = max(0, min(365, days_to_resolution)) / 365  # 1年で正規化
         
-        # ========== LLM ==========
-        if llm_pred is not None:
-            features.llm_prediction = llm_pred
-        if llm_conf is not None:
-            features.llm_confidence = llm_conf
-        
+        # llm_pred / llm_conf は受け付けるが Features には含めない
+        # LLM は Bayesian で独立シグナルとして扱うため ML 特徴量から除外
+
         return features
 
 

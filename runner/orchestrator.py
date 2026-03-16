@@ -7,6 +7,7 @@ Orchestrator - フル統合ランナー
 - 学習層: Factor Miner + Auto-Killer (バックグラウンド)
 """
 import asyncio
+import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -168,6 +169,11 @@ class Orchestrator:
         # ML再学習管理
         self._resolved_since_last_training: int = 0
         self._retraining: bool = False
+
+        # 構造化ログ (data/trade_log.jsonl)
+        _log_dir = Path(__file__).parent.parent / "data"
+        _log_dir.mkdir(parents=True, exist_ok=True)
+        self._log_path = _log_dir / "trade_log.jsonl"
 
         # サイクルごとのトリガー設定数 (max_trades_per_cycle 上限管理)
         self._triggers_this_cycle: int = 0
@@ -375,6 +381,24 @@ class Orchestrator:
                 self.stats["trades_success"] += 1
                 print(f"   ✅ 約定: {result.message}")
                 self.executed_markets.add(trigger.market_id)
+
+                # 約定ログ (スリッページ = 発火価格 - シグナル時価格)
+                slippage = price - trigger.target_price
+                time_to_fire = (
+                    datetime.now(timezone.utc) - trigger.created_at
+                ).total_seconds()
+                self._log_event("trigger_fired", {
+                    "market_id": trigger.market_id,
+                    "question": trigger.question[:60],
+                    "side": trigger.side,
+                    "target_price": round(trigger.target_price, 6),
+                    "executed_price": round(price, 6),
+                    "slippage": round(slippage, 6),
+                    "slippage_pct": round(slippage / trigger.target_price, 6) if trigger.target_price else 0,
+                    "size": round(trigger.size, 2),
+                    "time_to_fire_sec": round(time_to_fire, 1),
+                    "success": True,
+                })
                 
                 # エクスポージャー: ペンディング → オープン
                 self.risk_manager.convert_pending_to_open(
@@ -407,6 +431,15 @@ class Orchestrator:
                     asyncio.create_task(self._mine_new_factor())
             else:
                 print(f"   ❌ 失敗: {result.message}")
+                self._log_event("trigger_fired", {
+                    "market_id": trigger.market_id,
+                    "question": trigger.question[:60],
+                    "side": trigger.side,
+                    "executed_price": round(price, 6),
+                    "size": round(trigger.size, 2),
+                    "success": False,
+                    "error": result.message,
+                })
                 # 失敗時はペンディングを解放
                 self.risk_manager.remove_pending_exposure(trigger.size)
             
@@ -588,6 +621,17 @@ class Orchestrator:
                 print(f"   ⚪ 信頼度不足 ({adjusted_confidence:.0%})")
                 return
             
+            # シグナルをログ
+            self._log_event("signal_generated", {
+                "market_id": getattr(market, "condition_id", ""),
+                "question": question[:60],
+                "action": signal.action.value,
+                "market_price": getattr(market, "yes_price", 0),
+                "predicted_prob": round(signal.final_probability, 4),
+                "edge": round(signal.edge, 4),
+                "confidence": round(adjusted_confidence, 4),
+            })
+
             # ポジションサイズ計算
             market_price = getattr(market, 'yes_price', 0.5)
             position_result = self.risk_manager.calculate_position_size(
@@ -673,8 +717,17 @@ class Orchestrator:
         # サイクル内トリガー数をカウント
         self._triggers_this_cycle += 1
 
+        self._log_event("trigger_set", {
+            "market_id": market_id,
+            "question": question[:60],
+            "side": signal.action.value,
+            "target_price": round(target_price, 6),
+            "size": round(size, 2),
+            "expiry_minutes": _trigger_expiry_minutes,
+        })
+
         print(f"   ⏰ トリガー設定: {signal.action.value} @ {target_price:.4f}")
-        print(f"      サイズ: ${size:.2f} | 有効期限: {self.config.trigger_expiry_minutes}分")
+        print(f"      サイズ: ${size:.2f} | 有効期限: {_trigger_expiry_minutes}分")
         
         # ダッシュボード更新
         if self.dashboard:
@@ -712,10 +765,14 @@ class Orchestrator:
                             pnl = self.position_tracker.resolve_by_market(market_id, resolution)
                             if pnl != 0:
                                 print(f"💰 マーケット解決: PnL ${pnl:+.2f}")
-                                # ファクターのPnLを後付け更新
                                 self.factor_manager.update_pnl_by_market(market_id, pnl)
-                                # RiskManagerの連敗カウント・残高を更新
                                 self.risk_manager.record_close(market_id, pnl)
+                                self._log_event("market_resolved", {
+                                    "market_id": market_id,
+                                    "outcome": outcome,
+                                    "resolution": resolution,
+                                    "pnl": round(pnl, 4),
+                                })
 
                             # 解決カウント更新 → ML再学習トリガー
                             self._resolved_since_last_training += 1
@@ -948,6 +1005,31 @@ class Orchestrator:
         finally:
             self._retraining = False
 
+    # ========== 構造化ログ ==========
+
+    def _log_event(self, event_type: str, data: Dict):
+        """
+        data/trade_log.jsonl にイベントを追記。
+        1行1JSON。ログ書き込み失敗はサイレント無視 (メインループを止めない)。
+
+        event_type:
+            signal_generated  - Auditor通過後のシグナル
+            trigger_set       - トリガー設定
+            trigger_fired     - トリガー発火・約定
+            trigger_expired   - トリガー期限切れ
+            market_resolved   - マーケット解決
+        """
+        try:
+            record = {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "event": event_type,
+                **data,
+            }
+            with open(self._log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # ログ失敗でもトレードは続行
+
     # ========== 期限切れトリガー清掃 ==========
 
     async def _cleanup_expired_triggers(self):
@@ -958,9 +1040,15 @@ class Orchestrator:
         ]
         
         for tid, trigger in expired:
-            # ペンディングエクスポージャーを解放
             self.risk_manager.remove_pending_exposure(trigger.size)
             del self.active_triggers[tid]
+            self._log_event("trigger_expired", {
+                "market_id": trigger.market_id,
+                "question": trigger.question[:60],
+                "side": trigger.side,
+                "target_price": round(trigger.target_price, 6),
+                "size": round(trigger.size, 2),
+            })
             print(f"🗑️ トリガー期限切れ: {tid[:16]}...")
 
 

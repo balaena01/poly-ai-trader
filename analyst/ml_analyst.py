@@ -1,7 +1,8 @@
 """
 ML Analyst
 - LightGBM による確率予測
-- 30特徴量、500ツリー
+- 28特徴量、500ツリー
+- LLM特徴量は除外 (Bayesian で独立シグナルとして統合)
 """
 import os
 import json
@@ -182,8 +183,6 @@ class MLAnalyst:
         market_volume: float = 0,
         market_liquidity: float = 0,
         end_date: datetime = None,
-        llm_pred: float = None,
-        llm_conf: float = None,
     ) -> MLPrediction:
         """
         生データから予測
@@ -197,8 +196,6 @@ class MLAnalyst:
             market_volume=market_volume,
             market_liquidity=market_liquidity,
             end_date=end_date,
-            llm_pred=llm_pred,
-            llm_conf=llm_conf,
         )
         
         return self.predict(features)
@@ -241,20 +238,17 @@ def generate_sample_data(n_samples: int = 1000):
     実際の運用では過去のマーケットデータを使用
     """
     np.random.seed(42)
-    
-    n_features = 30
+
+    n_features = 28  # LLM特徴量を除いた28特徴量
     X = np.random.randn(n_samples, n_features)
-    
+
     # 簡単なルールでラベル生成
-    # LLM予測 (index 28, 29) が高いほど YES になりやすい
-    llm_pred = X[:, 28]
-    llm_conf = X[:, 29]
-    
-    # モメンタム (index 0-7) もシグナルになる
+    # モメンタム (index 6: price_momentum) と YES価格 (index 24: market_yes_price)
     momentum = X[:, 6]
-    
+    yes_price = 1 / (1 + np.exp(-X[:, 24]))  # [0, 1] に正規化
+
     # 合成スコア
-    score = 0.4 * llm_pred + 0.2 * llm_conf + 0.3 * momentum + 0.1 * np.random.randn(n_samples)
+    score = 0.5 * momentum + 0.3 * (yes_price - 0.5) + 0.2 * np.random.randn(n_samples)
     
     # シグモイド変換
     prob = 1 / (1 + np.exp(-score))

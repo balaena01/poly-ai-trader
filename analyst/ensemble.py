@@ -197,8 +197,7 @@ class EnsembleAnalyst:
                 market_volume=market.volume,
                 market_liquidity=market.liquidity,
                 end_date=market.end_date,
-                llm_pred=llm_prob,
-                llm_conf=llm_conf,
+                # llm_pred / llm_conf は渡さない: LLM は Bayesian で独立シグナルとして扱う
             )
             
             ml_result = self.ml_analyst.predict(features)
