@@ -129,7 +129,8 @@ class Orchestrator:
             use_orderflow=True,  # WebSocket から取引データ収集
         )
         self.executor = TradeExecutor(
-            dry_run=(self.config.mode == RunMode.DRY_RUN)
+            dry_run=(self.config.mode == RunMode.DRY_RUN),
+            use_risk_manager=False,  # オーケストレーターが一元管理するため無効化
         )
         self.risk_manager = RiskManager()
         self.auditor = Auditor()

@@ -108,15 +108,23 @@ class OrderflowDetector:
     def detect_whales(self, trades: List[Trade] = None) -> Dict:
         """
         クジラ取引を検出
-        
+
         Returns:
             {"buy_value": float, "sell_value": float, "signal": float, "trades": int}
         """
         if trades is None:
             cutoff = datetime.now() - timedelta(minutes=self.lookback_minutes)
             trades = [t for t in self.trade_history if t.timestamp > cutoff]
-        
-        whale_trades = [t for t in trades if t.value >= self.whale_threshold]
+
+        # 動的閾値: max(絶対下限, ウィンドウ内総取引量の1%)
+        # 流動性の小さいマーケットで全トレードがwhale判定されるのを防ぐ
+        if trades:
+            window_volume = sum(t.value for t in trades)
+            dynamic_threshold = max(self.whale_threshold, window_volume * 0.01)
+        else:
+            dynamic_threshold = self.whale_threshold
+
+        whale_trades = [t for t in trades if t.value >= dynamic_threshold]
         
         if not whale_trades:
             return {"buy_value": 0, "sell_value": 0, "signal": 0, "trades": 0}

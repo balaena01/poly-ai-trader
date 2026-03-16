@@ -8,7 +8,8 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: トリガー発火時エッジ再検証 + exit後の再エントリー修正 |
+| (最新) | fix: Whale動的閾値 + executor RiskManager二重計算修正 |
+| `97bffae` | fix: トリガー発火時エッジ再検証 + exit後の再エントリー修正 |
 | `1a2fa78` | feat: Open Positions パネルのデザインを刷新 |
 | `f2d743e` | feat: ダッシュボード Open Positions パネル追加 |
 | `6b23e62` | fix: ML再学習 volume データ修正 + Gamma API 直接取得 |
@@ -37,15 +38,14 @@
 
 ### 低優先度
 
-- [ ] **⑩ Whale閾値の絶対値固定** (`analyst/orderflow.py:72`)
-  - `whale_threshold_usd = $10,000` ハードコード
-  - 流動性の小さいマーケットでは全トレードがwhale判定される
-  - 対策案: 24h出来高の1%などを相対閾値にする
+- [x] **⑩ Whale閾値の絶対値固定** (`analyst/orderflow.py`) — 対応済み
+  - `whale_threshold_usd = $10,000` ハードコードで、流動性の小さいマーケットでは全トレードがwhale判定される問題
+  - 対策: `detect_whales()` 内でウィンドウ内総取引量の1%を動的閾値として計算、`max(絶対下限, 総取引量×1%)` でフロアを保持
 
-- [ ] **⑪ max_position_pct の二重定義** (`executor/trade_executor.py` / `risk/risk_manager.py`)
-  - 両ファイルにそれぞれ独立してポジション上限が存在
-  - 値が乖離した場合にどちらが優先されるか不明
-  - 対策案: executor は risk_manager の値を参照するよう統一
+- [x] **⑪ ポジションサイズの二重計算・上書きバグ** (`runner/orchestrator.py`) — 対応済み
+  - オーケストレーターが Kelly 計算した `size` を `executor.execute_order()` に渡しても、
+    `TradeExecutor` 内の RiskManager がダミー値 (edge=0.1, confidence=0.8) で再計算し上書きしていた
+  - 対策: `TradeExecutor(use_risk_manager=False)` に変更。リスク管理はオーケストレーターの `self.risk_manager` が一元担う
 
 ### 設計レベル
 
