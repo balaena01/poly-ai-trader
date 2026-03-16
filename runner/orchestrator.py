@@ -965,6 +965,7 @@ class Orchestrator:
         print("\n🔄 MLモデル再学習開始 (バックグラウンド)...")
 
         try:
+            import re as _re
             import httpx as _httpx
             import numpy as np
             from analyst.features import FeatureExtractor
@@ -978,42 +979,107 @@ class Orchestrator:
             _clob  = "https://clob.polymarket.com"
             _timeout = _httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
 
-            # 1. Gamma API から解決済みマーケットを直接取得
-            #    PolyClient.get_markets() は closed=false をハードコードしているため使用不可
+            def _parse_dt_local(s):
+                """日時文字列を UTC datetime に変換。失敗時は None。"""
+                if not s:
+                    return None
+                try:
+                    s = str(s).strip().replace(" ", "T")
+                    s = _re.sub(r'\.(\d+)', lambda m: '.' + m.group(1).ljust(6, '0')[:6], s)
+                    if s.endswith("+00"):
+                        s += ":00"
+                    elif not s.endswith("Z") and "+" not in s[10:] and s.count("-") <= 2:
+                        s += "+00:00"
+                    s = s.replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(s)
+                    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    return None
+
+            # 1. Gamma API から解決済みマーケットを取得
+            #    - closedTime 降順: 最近解決されたものから
+            #    - outcomePrices で YES/NO 判定 (resolutionResult は null が多い)
+            #    - createdAt〜closedTime < 2日は短期バイナリ → 除外
             resolved = []
+            cutoff_retrain = datetime.now(timezone.utc) - timedelta(days=180)
+            offset_r = 0
             async with _httpx.AsyncClient(timeout=_timeout) as hclient:
-                resp = await hclient.get(
-                    f"{_gamma}/markets",
-                    params={"closed": "true", "limit": 200, "order": "volume", "ascending": "false"},
-                )
-                resp.raise_for_status()
-                for m in resp.json():
-                    res_raw = str(
-                        m.get("resolution") or m.get("resolutionResult") or ""
-                    ).strip().upper()
-                    if res_raw in ("1", "YES", "TRUE"):
-                        outcome = "YES"
-                    elif res_raw in ("0", "NO", "FALSE"):
-                        outcome = "NO"
-                    else:
-                        continue
+                while len(resolved) < 200:
+                    resp = await hclient.get(
+                        f"{_gamma}/markets",
+                        params={
+                            "closed": "true", "limit": 50,
+                            "offset": offset_r,
+                            "order": "closedTime", "ascending": "false",
+                        },
+                    )
+                    resp.raise_for_status()
+                    page = resp.json()
+                    if not page:
+                        break
 
-                    clob_ids = m.get("clobTokenIds", "[]")
-                    try:
-                        token_ids = json.loads(clob_ids) if isinstance(clob_ids, str) else clob_ids
-                    except Exception:
-                        token_ids = []
-                    yes_token_id = token_ids[0] if token_ids else ""
-                    if not yes_token_id:
-                        continue
+                    all_old = True
+                    for m in page:
+                        closed_time = _parse_dt_local(m.get("closedTime"))
+                        if closed_time and closed_time < cutoff_retrain:
+                            break
+                        if closed_time:
+                            all_old = False
 
-                    resolved.append({
-                        "yes_token_id": yes_token_id,
-                        "outcome": outcome,
-                        "volume": float(m.get("volumeNum") or m.get("volume") or 0),
-                        "liquidity": float(m.get("liquidityNum") or m.get("liquidity") or 0),
-                        "end_date_str": m.get("endDateIso") or m.get("end_date_iso"),
-                    })
+                        # 短期マーケット除外
+                        created_at = _parse_dt_local(m.get("createdAt"))
+                        if closed_time and created_at:
+                            if (closed_time - created_at).total_seconds() < 172800:
+                                continue
+
+                        # outcomePrices で解決結果判定
+                        outcome = None
+                        op_raw = m.get("outcomePrices", "[]")
+                        try:
+                            op = json.loads(op_raw) if isinstance(op_raw, str) else op_raw
+                            if op and len(op) >= 2:
+                                p0, p1 = float(op[0]), float(op[1])
+                                if p0 >= 0.99:
+                                    outcome = "YES"
+                                elif p1 >= 0.99:
+                                    outcome = "NO"
+                        except Exception:
+                            pass
+                        if outcome is None:
+                            rs = str(m.get("resolutionResult") or m.get("resolution") or "").strip().upper()
+                            if rs in ("1", "YES", "TRUE"):
+                                outcome = "YES"
+                            elif rs in ("0", "NO", "FALSE"):
+                                outcome = "NO"
+                        if outcome is None:
+                            continue
+
+                        clob_ids = m.get("clobTokenIds", "[]")
+                        try:
+                            token_ids = json.loads(clob_ids) if isinstance(clob_ids, str) else clob_ids
+                        except Exception:
+                            token_ids = []
+                        yes_token_id = token_ids[0] if token_ids else ""
+                        if not yes_token_id:
+                            continue
+
+                        volume = float(m.get("volumeNum") or m.get("volume") or 0)
+                        if volume < 1000:
+                            continue
+
+                        end_date = _parse_dt_local(m.get("endDateIso") or m.get("endDate"))
+                        resolved.append({
+                            "yes_token_id": yes_token_id,
+                            "outcome": outcome,
+                            "volume": volume,
+                            "liquidity": float(m.get("liquidityNum") or m.get("liquidity") or 0),
+                            "end_date": end_date,
+                        })
+
+                    if all_old or len(page) < 50:
+                        break
+                    offset_r += 50
+                    await asyncio.sleep(0.2)
 
             if not resolved:
                 print("   ⚠️ 解決済みマーケットなし — 再学習スキップ")
@@ -1021,24 +1087,32 @@ class Orchestrator:
 
             print(f"   📋 解決済みマーケット: {len(resolved)}件")
 
-            # 2. 特徴量 & ラベルを収集
+            # 2. 特徴量 & ラベルを収集 (期間60%時点スナップショット / lookahead なし)
             extractor = FeatureExtractor()
             X_list, y_list = [], []
 
             async with _httpx.AsyncClient(timeout=_timeout) as hclient:
-                for m in resolved[:100]:
+                for m in resolved[:150]:
                     try:
-                        # 価格履歴
                         price_points = await self.price_fetcher.fetch_prices(
                             token_id=m["yes_token_id"],
                             interval="max",
                             fidelity=60,
                         )
-                        if len(price_points) < 10:
+                        n = len(price_points)
+                        if n < 48:
                             continue
-                        prices = [p.price for p in price_points[:-1]]
 
-                        # 取引履歴 (volume特徴量: buy_volume_ratio / order_flow_imbalance)
+                        # 期間60%時点 (lookahead 防止)
+                        analysis_idx = max(24, min(int(n * 0.6), n - 24))
+                        history = [p.price for p in price_points[:analysis_idx]]
+                        yes_price = history[-1]
+
+                        # 価格が既に解決値に張り付いていたらスキップ
+                        if yes_price <= 0.01 or yes_price >= 0.99:
+                            continue
+
+                        # 取引履歴
                         trades: List = []
                         try:
                             tr_resp = await hclient.get(
@@ -1050,11 +1124,9 @@ class Orchestrator:
                                 raw_trades = raw_trades.get("data", [])
                             for t in raw_trades:
                                 try:
-                                    ts_str = t.get("timestamp") or t.get("match_time") or ""
-                                    ts = (
-                                        datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                                        if ts_str else datetime.now(timezone.utc)
-                                    )
+                                    ts = _parse_dt_local(
+                                        t.get("timestamp") or t.get("match_time") or ""
+                                    ) or datetime.now(timezone.utc)
                                     trades.append(OFTrade(
                                         timestamp=ts,
                                         price=float(t.get("price", 0)),
@@ -1064,33 +1136,22 @@ class Orchestrator:
                                 except Exception:
                                     pass
                         except Exception:
-                            pass  # trades 取得失敗は無視して続行
-
-                        # 終了日パース
-                        end_date = None
-                        end_date_str = m.get("end_date_str")
-                        if end_date_str:
-                            try:
-                                end_date = datetime.fromisoformat(
-                                    end_date_str.replace("Z", "+00:00")
-                                )
-                            except Exception:
-                                pass
+                            pass
 
                         features = extractor.extract(
-                            prices=prices[-100:],
+                            prices=history[-100:],
                             trades=trades if trades else None,
-                            yes_price=prices[-1] if prices else 0.5,
+                            yes_price=yes_price,
                             market_volume=m["volume"],
                             market_liquidity=m["liquidity"],
-                            end_date=end_date,
+                            end_date=m["end_date"],
                         )
                         X_list.append(features.to_list())
                         y_list.append(1 if m["outcome"] == "YES" else 0)
 
                     except Exception:
                         continue
-                    await asyncio.sleep(0.2)  # レート制限
+                    await asyncio.sleep(0.2)
 
             if len(X_list) < 50:
                 print(f"   ⚠️ データ不足 ({len(X_list)}件 < 50件) — 再学習スキップ")
