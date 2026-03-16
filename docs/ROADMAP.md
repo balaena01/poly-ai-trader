@@ -18,14 +18,17 @@
 │                            ▲                                    │
 │                            │ シグナル & トリガー条件            │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │              分析層 (5-60分間隔)                         │   │
-│  │  News ──▶ Analyst ──▶ Auditor ──▶ Risk Manager          │   │
+│  │              分析層 (5-240分間隔)                        │   │
+│  │  News ──▶ Analyst (LLM+ML+OF) ──▶ Auditor ──▶ Risk Mgr │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                            ▲                                    │
-│                            │ 戦略更新 (50トレードごと)          │
+│                            │ バックグラウンド更新               │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │              学習層 (バックグラウンド)                   │   │
 │  │  Factor Miner ──▶ Backtest ──▶ Auto-Killer              │   │
+│  │                              (50トレードごと)            │   │
+│  │  ML Retrainer ──▶ LightGBM学習 ──▶ Hot-swap             │   │
+│  │                              (20マーケット解決ごと)      │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
 └────────────────────────────────────────────────────────────────┘
@@ -36,8 +39,9 @@
 | 層 | 処理 | 頻度 | 方式 |
 |----|------|------|------|
 | リアルタイム | 価格監視・売買 | 常時 | WebSocket |
-| 分析 | LLM予測・シグナル生成 | 5-60分 | バッチ |
-| 学習 | 戦略生成・淘汰 | 50トレードごと | バックグラウンド |
+| 分析 | LLM+ML+Orderflow 予測・シグナル生成 | 5-240分 | バッチ |
+| 学習 (Factor) | 戦略生成・淘汰 | 50トレードごと | バックグラウンド |
+| 学習 (ML) | LightGBM再学習・ホットスワップ | 20マーケット解決ごと | ThreadPoolExecutor |
 
 ### 分析間隔の自動調整 (ルールベース)
 
@@ -45,7 +49,7 @@
 def get_analysis_interval(market) -> int:
     """分析間隔 (分)"""
     time_to_resolution = market.end_date - datetime.now()
-    
+
     if time_to_resolution < timedelta(hours=2):
         return 5     # 解決直前
     elif time_to_resolution < timedelta(hours=24):
@@ -56,7 +60,7 @@ def get_analysis_interval(market) -> int:
         return 240   # それ以上
 ```
 
-**設計思想:** LLMは「戦略家」、WebSocketは「執行官」
+**設計思想:** LLMは「戦略家」、WebSocketは「執行官」、学習層は「改良担当」
 
 ---
 
@@ -84,15 +88,16 @@ def get_analysis_interval(market) -> int:
 
 ## Phase 2: シグナル強化 ✅ 完了
 
-**目標:** 複数シグナルの組み合わせ + Bayesian統合
+**目標:** 複数シグナルの組み合わせ + Bayesian統合 + ML自動再学習
 
-### 追加コンポーネント
+### コンポーネント
 
 | 名前 | 説明 |
 |------|------|
 | LightGBM Model | 30特徴量、500ツリーの確率出力 |
 | Orderflow Detector | クジラ検出、流動性シフト、大口注文クラスタ |
 | Bayesian Aggregator | 複数シグナルの確率的統合 |
+| ML Retrainer | 解決済みデータで自動再学習 + ホットスワップ |
 
 ### Bayesian統合例
 ```
@@ -106,15 +111,38 @@ Final:      76.9%
 Edge:       +23.9%
 ```
 
+### ML自動再学習フロー
+
+```
+マーケット解決 20件ごと
+  ↓ asyncio.create_task() でバックグラウンド起動
+  ↓ 解決済みマーケットを API から収集 (run_in_executor)
+  ↓ 各マーケットの価格履歴を非同期取得 (await, レート制限付き)
+  ↓ 特徴量抽出 + train/val split
+  ↓ LightGBM 学習 (ThreadPoolExecutor — メインループをブロックしない)
+  ↓ models/lgb_model.pkl に保存
+  ↓ EnsembleAnalyst.reload_ml_model() でホットスワップ
+```
+
+- 最小データ数: 50件 (未満の場合はスキップ)
+- `--no-retrain` で無効化可能
+- `models/lgb_model.pkl` が存在すれば起動時にも自動ロード
+
 ### ファイル構成
 ```
 analyst/
 ├── llm_analyst.py      # LLM
-├── ml_analyst.py       # LightGBM
+├── ml_analyst.py       # LightGBM (save_model / reload)
 ├── orderflow.py        # オーダーフロー
 ├── bayesian.py         # Bayesian統合
-├── ensemble.py         # 全シグナル統合
+├── ensemble.py         # 全シグナル統合 + reload_ml_model()
 └── features.py         # 30特徴量
+
+scripts/
+└── train_ml.py         # 手動学習スクリプト
+
+models/
+└── lgb_model.pkl       # 学習済みモデル (自動再学習で上書き)
 ```
 
 ---
@@ -123,7 +151,7 @@ analyst/
 
 **目標:** 資金管理とリスク制御
 
-### 追加コンポーネント
+### コンポーネント
 
 | 名前 | 説明 |
 |------|------|
@@ -160,7 +188,7 @@ risk/
 
 **目標:** 戦略の自動生成と淘汰
 
-### 追加コンポーネント
+### コンポーネント
 
 | 名前 | 説明 |
 |------|------|
@@ -170,15 +198,27 @@ risk/
 ### ファクター管理
 - 最大10アクティブファクター
 - IC > 0.05 で採用
-- 50トレード後に評価
-- 5連敗 or IC不足で淘汰
+- **50トレード成功ごとに** `mine_new_factor()` がバックグラウンドで実行
+- 5連敗 or IC不足で自動淘汰
+- マーケット解決時に PnL を後付け更新して IC を再計算
+- `data/factors/factors.json` に永続化 (再起動後も復元)
+
+### ファクター記録フロー
+
+```
+トレード発火 → record_trade(pnl=0, market_id=...)  # エントリー時点
+    ↓
+マーケット解決 → update_pnl_by_market(market_id, pnl)  # 実際のPnLで更新
+    ↓
+IC再計算 → _check_and_kill()  # 基準未達なら自動淘汰
+```
 
 ### ファイル構成
 ```
 factor/
 ├── miner.py            # 仮説生成
-├── backtester.py       # バックテスト
-└── manager.py          # ファクター管理
+├── backtester.py       # バックテスト (仮説IDシードで再現性確保)
+└── manager.py          # ファクター管理 + update_pnl_by_market()
 ```
 
 ---
@@ -190,8 +230,8 @@ factor/
 | 名前 | 説明 |
 |------|------|
 | PriceHistoryFetcher | Polymarket過去価格 (/prices-history) |
-| PolyWebSocket | リアルタイム価格ストリーム |
-| NewsFetcher | Scrapling + Google News |
+| PolyWebSocket | リアルタイム価格・取引ストリーム |
+| NewsFetcher | Google News RSS (+ Scrapling対応) |
 
 ### Polymarket API
 
@@ -203,13 +243,13 @@ factor/
 
 ### ニュースソース
 - **Scrapling対応**: Decrypt, CoinDesk, CoinTelegraph, TheBlock
-- **Scrapling不要**: Google News RSS
+- **Scrapling不要**: Google News RSS (デフォルト)
 
 ### ファイル構成
 ```
 data_fetcher/
 ├── history.py          # 過去価格
-├── websocket_client.py # WebSocket
+├── websocket_client.py # WebSocket (価格・取引ストリーム)
 └── news_fetcher.py     # ニュース (Scrapling/Google)
 ```
 
@@ -219,12 +259,13 @@ data_fetcher/
 
 | カテゴリ | 技術 |
 |---------|------|
-| 言語 | Python 3.9+ |
+| 言語 | Python 3.10+ |
 | ML | LightGBM |
 | LLM | LiteLLM (Anthropic, OpenAI, Groq) |
 | スクレイピング | Scrapling (ステルスモード) |
-| 価格データ | Polymarket WebSocket |
+| 価格データ | Polymarket WebSocket + Binance REST |
 | 執行 | py-clob-client |
+| 非同期 | asyncio + ThreadPoolExecutor (CPU bound処理) |
 
 ### LLM モデル
 
@@ -241,15 +282,17 @@ data_fetcher/
 **リアルタイム Web UI** (Cyberpunk × Bloomberg Terminal)
 
 ```bash
-python main.py run
+python main.py run        # ダッシュボード自動起動
 # → http://localhost:8080
+
+python main.py run --no-dashboard  # 無効化
 ```
 
 ### 機能
 
 | パネル | 説明 |
 |--------|------|
-| Live Signals | LLM分析結果をリアルタイム表示 |
+| Live Signals | LLM+ML+Orderflow 分析結果をリアルタイム表示 |
 | Active Triggers | 待機中の注文 |
 | Trade History | 取引履歴 |
 | Edge Distribution | エッジの推移グラフ (Chart.js) |
@@ -269,7 +312,7 @@ python main.py run
 | Phase | 目標 | 状態 |
 |-------|------|------|
 | 1 | MVP | ✅ 完了 |
-| 2 | シグナル強化 | ✅ 完了 |
+| 2 | シグナル強化 + ML自動再学習 | ✅ 完了 |
 | 3 | リスク管理 | ✅ 完了 |
 | 4 | 自動学習 | ✅ 完了 |
 | - | データ取得 | ✅ 完了 |

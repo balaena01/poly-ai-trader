@@ -121,6 +121,7 @@ async def cmd_run(args):
         enable_exit=args.enable_exit,
         take_profit_pct=args.take_profit,
         stop_loss_pct=args.stop_loss,
+        auto_retrain=not args.no_retrain,
     )
     
     orchestrator = Orchestrator(config)
@@ -200,6 +201,7 @@ def main():
     p_run.add_argument("--enable-exit", action="store_true", help="利確・損切りを有効化")
     p_run.add_argument("--take-profit", type=float, default=0.50, help="利確% (デフォルト: 50%)")
     p_run.add_argument("--stop-loss", type=float, default=-0.50, help="損切り% (デフォルト: -50%)")
+    p_run.add_argument("--no-retrain", action="store_true", help="ML自動再学習を無効化")
     
     # markets
     p_markets = subparsers.add_parser("markets", help="マーケット一覧")

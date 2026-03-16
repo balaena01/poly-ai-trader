@@ -19,20 +19,23 @@ Polymarket AI 自動売買システム
 │                            ▲                                    │
 │                            │ シグナル & トリガー条件            │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │              分析層 (5-60分間隔)                         │   │
+│  │              分析層 (5-240分間隔)                        │   │
 │  │  ┌────────┐  ┌──────────┐  ┌────────┐  ┌────────────┐   │   │
 │  │  │ News   │─▶│ Analyst  │─▶│Auditor │─▶│Risk Manager│   │   │
 │  │  │Fetcher │  │LLM+ML+OF │  │  監査  │  │  リスク    │   │   │
 │  │  └────────┘  └──────────┘  └────────┘  └────────────┘   │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                            ▲                                    │
-│                            │ 戦略更新 (50トレードごと)          │
+│                            │ バックグラウンド更新               │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │              学習層 (バックグラウンド)                   │   │
-│  │  ┌──────────────┐    ┌──────────────┐                   │   │
-│  │  │ Factor Miner │───▶│ Auto-Killer  │                   │   │
-│  │  │  戦略生成    │    │  戦略淘汰    │                   │   │
-│  │  └──────────────┘    └──────────────┘                   │   │
+│  │  ┌──────────────────────────────────────────────────┐   │   │
+│  │  │ Factor Miner → Backtest → Auto-Killer            │   │   │
+│  │  │                          (50トレードごと)         │   │   │
+│  │  ├──────────────────────────────────────────────────┤   │   │
+│  │  │ ML Retrainer → LightGBM学習 → Hot-swap           │   │   │
+│  │  │                          (20マーケット解決ごと)   │   │   │
+│  │  └──────────────────────────────────────────────────┘   │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
 └────────────────────────────────────────────────────────────────┘
@@ -41,7 +44,9 @@ Polymarket AI 自動売買システム
 ## 実行フロー
 
 ```
-LLM分析 (5-60分間隔、解決時間に応じて可変)
+Binance/Polymarket スキャン → BTC/ETH価格取得
+    ↓
+LLM + ML + Orderflow 分析 (5-240分間隔、解決時間に応じて可変)
     ↓
 シグナル生成 → トリガー条件セット
     ↓
@@ -52,10 +57,11 @@ WebSocket 常時監視
 
 | 処理 | 頻度 | 方式 |
 |------|------|------|
-| LLM分析 | 5-60分 (ルールベース可変) | バッチ |
+| LLM+ML+Orderflow 分析 | 5-240分 (ルールベース可変) | バッチ |
 | 価格監視 | 常時 | WebSocket |
 | 売買執行 | 条件一致時 | 即時 |
-| 戦略更新 | 50トレードごと | Factor Miner |
+| Factor Miner | 50トレードごと | バックグラウンド |
+| ML再学習 + ホットスワップ | 20マーケット解決ごと | バックグラウンド (ThreadPoolExecutor) |
 
 **分析間隔の自動調整:**
 ```python
@@ -89,6 +95,9 @@ python main.py run --live
 
 # ダッシュボードなし
 python main.py run --no-dashboard
+
+# ML自動再学習を無効化
+python main.py run --no-retrain
 ```
 
 ## ダッシュボード
@@ -98,11 +107,40 @@ python main.py run
 # → http://localhost:8080
 ```
 
+ダッシュボードはデフォルトで有効。無効にする場合は `--no-dashboard`。
+
 リアルタイム表示:
-- **Live Signals**: LLM分析結果
+- **Live Signals**: LLM+ML+Orderflow 分析結果
 - **Active Triggers**: 待機中の注文
 - **Trade History**: 取引履歴
 - **Edge Distribution**: エッジの推移グラフ
+
+## MLモデル
+
+LightGBM モデルは 2 通りの方法で学習されます。
+
+### 手動学習
+
+```bash
+python scripts/train_ml.py --days 30
+# → models/lgb_model.pkl に保存
+```
+
+`models/lgb_model.pkl` が存在すれば起動時に自動でロードされ、ML分析が有効になります。
+
+### 自動再学習 (稼働中)
+
+20 マーケット解決ごとに自動で再学習が走ります。
+
+```
+マーケット解決 20件
+  → 解決済みデータを収集 (Polymarket API)
+  → 価格履歴を取得 (非同期)
+  → LightGBM 再学習 (ThreadPoolExecutor でバックグラウンド実行)
+  → モデルをホットスワップ (メインループを止めない)
+```
+
+無効にする場合: `python main.py run --no-retrain`
 
 ## データ取得
 
@@ -134,7 +172,11 @@ python -m factor.manager --evaluate    # 評価・淘汰
 python -m factor.manager --mine "コンテキスト"  # 新規生成
 ```
 
-**自動淘汰**: 50トレード後に IC < 0.05 のファクターは自動削除
+**自動動作:**
+- 50トレード成功ごとに `mine_new_factor()` がバックグラウンドで実行
+- IC > 0.05 のファクターのみ採用
+- 5連敗 or IC不足で自動淘汰
+- ファクターは `data/factors/factors.json` に永続化、再起動後も復元
 
 ## 環境変数
 
@@ -160,7 +202,7 @@ ANTHROPIC_API_KEY=sk-ant-api03-xxx
 ```
 poly-ai-trader/
 ├── client/           # Polymarket API
-├── scanner/          # 市場監視
+├── scanner/          # 市場監視 (Polymarket + Binance価格)
 ├── analyst/          # LLM + ML + Orderflow + Bayesian
 ├── executor/         # 注文実行
 ├── risk/             # リスク管理 + 監査
@@ -173,10 +215,13 @@ poly-ai-trader/
 │   └── server.py         # FastAPI + WebSocket
 ├── runner/           # オーケストレーター
 │   └── orchestrator.py   # 3層統合ランナー
+├── scripts/
+│   └── train_ml.py       # MLモデル手動学習スクリプト
+├── models/           # 学習済みモデル (lgb_model.pkl)
 ├── data/
 │   ├── historical/   # 過去価格データ
 │   ├── news/         # ニュースキャッシュ
-│   └── factors/      # ファクターDB
+│   └── factors/      # ファクターDB (factors.json)
 └── main.py           # CLI
 ```
 
@@ -185,7 +230,7 @@ poly-ai-trader/
 | Phase | 内容 | 状態 |
 |-------|------|------|
 | 1 | Scanner + Analyst + Executor | ✅ |
-| 2 | LightGBM + Orderflow + Bayesian | ✅ |
+| 2 | LightGBM + Orderflow + Bayesian + ML自動再学習 | ✅ |
 | 3 | Risk Manager + Auditor | ✅ |
 | 4 | Factor Miner + Auto-learning | ✅ |
 
@@ -196,3 +241,4 @@ poly-ai-trader/
 - **秘密鍵の管理**: `.env` に保存、`.gitignore` に追加済み
 - **リスク**: 予測市場は投機的。余剰資金で
 - **ドライラン**: デフォルトで有効。`--live` で本番実行
+- **ML再学習**: 解決済みマーケットが50件以上ないとモデルが学習されない
