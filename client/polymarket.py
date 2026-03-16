@@ -177,8 +177,20 @@ class PolyClient:
             # API認証情報を設定
             self._client.set_api_creds(self._client.create_or_derive_api_creds())
             self._authenticated = True
-            
-            print("✅ Polymarket接続成功 (認証済み)")
+
+            # Allowance を更新 (未設定だと注文が "not enough allowance" で弾かれる)
+            try:
+                from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+                self._client.update_balance_allowance(
+                    params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+                )
+                self._client.update_balance_allowance(
+                    params=BalanceAllowanceParams(asset_type=AssetType.CONDITIONAL)
+                )
+                print("✅ Polymarket接続成功 (認証済み・allowance更新完了)")
+            except Exception as ae:
+                print(f"✅ Polymarket接続成功 (認証済み) ⚠️ allowance更新失敗: {ae}")
+
             return True
             
         except Exception as e:
