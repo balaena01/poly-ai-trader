@@ -8,7 +8,8 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: ML再学習 volume データ修正 + Gamma API 直接取得 |
+| (最新) | feat: ダッシュボード Open Positions パネル追加 |
+| `6b23e62` | fix: ML再学習 volume データ修正 + Gamma API 直接取得 |
 | `4b2fdbd` | feat: エンドツーエンドバックテスト基盤実装 |
 | `aa70b41` | 設計レベル2件修正: ML独立化 + 構造化ログ |
 | `fdf5dc4` | トレードロジック 高・中バグ8件修正 |
@@ -58,8 +59,10 @@
   - メトリクス: 勝率, ROI, Sharpe, 最大ドローダウン / `data/backtest_results.json` 保存
   - `python scripts/backtest.py --days 90 --limit 100 [--use-llm] [--min-edge 0.15]`
 
-- [ ] **ポジション管理 UI の強化**
-  - ダッシュボードにポジション一覧 (エントリー価格・含み損益) を追加したい
+- [x] **ポジション管理 UI の強化** — 対応済み
+  - 「Open Positions」パネルをダッシュボードに追加
+  - エントリー価格・現在価格・含み損益 ($・%) をリアルタイム表示
+  - 分析サイクルごとに orchestrator から WebSocket でプッシュ
 
 - [x] **ML特徴量の volume データ改善** — 対応済み
   - `_retrain_ml_model` で CLOB `/trades` エンドポイントから取引履歴を取得

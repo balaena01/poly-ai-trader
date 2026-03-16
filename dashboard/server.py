@@ -65,6 +65,7 @@ class DashboardServer:
             "active_triggers": [],
             "recent_signals": [],
             "recent_trades": [],
+            "open_positions": [],
             "markets": [],
             "prices": {"BTC": 0, "ETH": 0},
             "price_history": [],  # For charts
@@ -196,6 +197,15 @@ class DashboardServer:
             "timestamp": datetime.now().isoformat(),
         })
     
+    async def push_positions(self, positions: list):
+        """オープンポジション一覧を更新"""
+        self.state["open_positions"] = positions
+        await self.manager.broadcast({
+            "type": "positions",
+            "data": positions,
+            "timestamp": datetime.now().isoformat(),
+        })
+
     async def push_price(self, symbol: str, price: float):
         """価格更新"""
         self.state["prices"][symbol] = price
@@ -424,12 +434,15 @@ class DashboardServer:
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(4, 1fr);
+            grid-template-columns: repeat(5, 1fr);
             gap: 16px;
             margin-bottom: 24px;
         }
         
         @media (max-width: 1200px) {
+            .stats-grid { grid-template-columns: repeat(3, 1fr); }
+        }
+        @media (max-width: 800px) {
             .stats-grid { grid-template-columns: repeat(2, 1fr); }
         }
         
@@ -551,6 +564,51 @@ class DashboardServer:
             border-radius: 2px;
         }
         
+        /* Position Items */
+        .position-item {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 8px 16px;
+            padding: 14px 16px;
+            background: var(--bg-elevated);
+            border-radius: 6px;
+            margin-bottom: 10px;
+            border-left: 3px solid var(--neon-blue);
+            transition: all 0.2s ease;
+        }
+        .position-item:hover { background: var(--bg-hover); }
+        .position-item:last-child { margin-bottom: 0; }
+        .position-left { min-width: 0; }
+        .position-right { text-align: right; white-space: nowrap; }
+        .position-question {
+            font-size: 12px;
+            color: var(--text-primary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-bottom: 6px;
+        }
+        .position-meta {
+            display: flex;
+            gap: 12px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .position-pnl {
+            font-size: 15px;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+        }
+        .position-pnl-pct {
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            margin-top: 3px;
+        }
+        .pnl-pos { color: var(--neon-green); }
+        .pnl-neg { color: var(--neon-red); }
+        .pnl-neu { color: var(--text-secondary); }
+
         /* Signal Items */
         .signal-item {
             padding: 16px;
@@ -801,6 +859,10 @@ class DashboardServer:
                 <div class="stat-label">Active Triggers</div>
                 <div class="stat-value" id="triggers-count">0</div>
             </div>
+            <div class="stat-card">
+                <div class="stat-label">Open Positions</div>
+                <div class="stat-value" id="positions-count">0</div>
+            </div>
         </div>
         
         <div class="main-grid">
@@ -841,6 +903,16 @@ class DashboardServer:
                 </div>
             </div>
             
+            <div class="panel full-width">
+                <div class="panel-header">
+                    <span class="panel-title">◈ Open Positions</span>
+                    <span class="panel-badge" id="positions-badge">0 positions</span>
+                </div>
+                <div class="panel-body" id="positions-list">
+                    <div class="empty-state">No open positions</div>
+                </div>
+            </div>
+
             <div class="panel full-width">
                 <div class="panel-header">
                     <span class="panel-title">◈ Trade History</span>
@@ -1051,6 +1123,9 @@ class DashboardServer:
                 case 'price':
                     updatePrice(msg.symbol, msg.price);
                     break;
+                case 'positions':
+                    renderPositions(msg.data || []);
+                    break;
             }
         }
         
@@ -1069,6 +1144,7 @@ class DashboardServer:
             
             renderSignals(state.recent_signals);
             renderTriggers(state.active_triggers);
+            renderPositions(state.open_positions || []);
             renderTrades(state.recent_trades);
             
             // Load edge history
@@ -1256,6 +1332,59 @@ class DashboardServer:
             trades.forEach(t => list.appendChild(createTradeElement(t)));
         }
         
+        function renderPositions(positions) {
+            const list = document.getElementById('positions-list');
+            const count = positions.length;
+            document.getElementById('positions-count').textContent = count;
+            document.getElementById('positions-badge').textContent = count + ' position' + (count !== 1 ? 's' : '');
+
+            if (!count) {
+                list.innerHTML = '<div class="empty-state">No open positions</div>';
+                return;
+            }
+            list.innerHTML = '';
+            positions.forEach(p => list.appendChild(createPositionElement(p)));
+        }
+
+        function createPositionElement(pos) {
+            const div = document.createElement('div');
+            div.className = 'position-item';
+
+            const pnl = pos.unrealized_pnl || 0;
+            const pnlPct = pos.unrealized_pnl_pct || 0;
+            const pnlClass = pnl > 0.005 ? 'pnl-pos' : pnl < -0.005 ? 'pnl-neg' : 'pnl-neu';
+            const pnlSign = pnl >= 0 ? '+' : '';
+            const side = (pos.side || '').toUpperCase().replace('_', ' ');
+            const sideColor = side.includes('YES') ? 'var(--neon-cyan)' : 'var(--neon-magenta)';
+
+            // Duration
+            let duration = '';
+            if (pos.created_at) {
+                const ms = Date.now() - new Date(pos.created_at).getTime();
+                const h = Math.floor(ms / 3600000);
+                const m = Math.floor((ms % 3600000) / 60000);
+                duration = h > 0 ? `${h}h ${m}m` : `${m}m`;
+            }
+
+            div.innerHTML = `
+                <div class="position-left">
+                    <div class="position-question">${pos.question || 'Unknown'}</div>
+                    <div class="position-meta">
+                        <span style="color:${sideColor}">${side}</span>
+                        <span>ENTRY ${(pos.entry_price * 100).toFixed(1)}%</span>
+                        <span>NOW ${(pos.current_price * 100).toFixed(1)}%</span>
+                        <span>SIZE $${(pos.size || 0).toFixed(2)}</span>
+                        ${duration ? `<span>${duration}</span>` : ''}
+                    </div>
+                </div>
+                <div class="position-right">
+                    <div class="position-pnl ${pnlClass}">${pnlSign}$${pnl.toFixed(2)}</div>
+                    <div class="position-pnl-pct ${pnlClass}">${pnlSign}${(pnlPct * 100).toFixed(1)}%</div>
+                </div>
+            `;
+            return div;
+        }
+
         function createTradeElement(trade) {
             const div = document.createElement('div');
             div.className = `trade-item ${trade.success ? 'trade-success' : 'trade-fail'}`;

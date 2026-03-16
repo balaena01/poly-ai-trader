@@ -490,7 +490,11 @@ class Orchestrator:
                 
                 # 利確・損切りチェック
                 await self._check_position_exits(markets)
-                
+
+                # ダッシュボードにポジション一覧を送信
+                if self.dashboard:
+                    await self._push_positions_to_dashboard(markets)
+
                 # 期限切れトリガーをクリーンアップ
                 await self._cleanup_expired_triggers()
                 
@@ -1100,6 +1104,40 @@ class Orchestrator:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception:
             pass  # ログ失敗でもトレードは続行
+
+    # ========== ポジションダッシュボード送信 ==========
+
+    async def _push_positions_to_dashboard(self, markets: List):
+        """オープンポジションの含み損益を計算してダッシュボードへ送信"""
+        try:
+            # market_id → 現在の YES 価格 マップ
+            current_prices: Dict[str, float] = {}
+            for m in markets:
+                mid = getattr(m, "condition_id", None)
+                price = getattr(m, "yes_price", None)
+                if mid and price:
+                    current_prices[mid] = price
+
+            positions_data = []
+            for pos in self.position_tracker.get_open_positions():
+                yes_price = current_prices.get(pos.market_id, pos.entry_price)
+                unrealized = pos.calculate_unrealized_pnl(yes_price)
+                unrealized_pct = pos.get_unrealized_pnl_pct(yes_price)
+                positions_data.append({
+                    "market_id": pos.market_id,
+                    "question": pos.question[:60],
+                    "side": pos.side,
+                    "entry_price": round(pos.entry_price, 6),
+                    "current_price": round(yes_price, 6),
+                    "size": round(pos.size, 2),
+                    "unrealized_pnl": round(unrealized, 4),
+                    "unrealized_pnl_pct": round(unrealized_pct, 4),
+                    "created_at": pos.created_at.isoformat() if pos.created_at else None,
+                })
+
+            await self.dashboard.push_positions(positions_data)
+        except Exception:
+            pass  # ダッシュボード送信失敗でもメインループを止めない
 
     # ========== 期限切れトリガー清掃 ==========
 
