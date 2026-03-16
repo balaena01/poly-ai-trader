@@ -566,48 +566,98 @@ class DashboardServer:
         
         /* Position Items */
         .position-item {
-            display: grid;
-            grid-template-columns: 1fr auto;
-            gap: 8px 16px;
-            padding: 14px 16px;
+            position: relative;
             background: var(--bg-elevated);
             border-radius: 6px;
-            margin-bottom: 10px;
-            border-left: 3px solid var(--neon-blue);
-            transition: all 0.2s ease;
+            margin-bottom: 8px;
+            overflow: hidden;
+            transition: transform 0.15s ease, background 0.15s ease;
         }
-        .position-item:hover { background: var(--bg-hover); }
         .position-item:last-child { margin-bottom: 0; }
-        .position-left { min-width: 0; }
-        .position-right { text-align: right; white-space: nowrap; }
+        .position-item:hover { background: var(--bg-hover); transform: translateX(3px); }
+        .position-item.pos-winning { border-left: 3px solid var(--neon-green); box-shadow: inset 0 0 40px rgba(0,255,136,0.04); }
+        .position-item.pos-losing  { border-left: 3px solid var(--neon-red);   box-shadow: inset 0 0 40px rgba(255,51,102,0.04); }
+        .position-item.pos-neutral { border-left: 3px solid var(--neon-blue); }
+
+        .position-inner {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            align-items: center;
+            gap: 20px;
+            padding: 14px 18px 18px 16px;
+        }
         .position-question {
             font-size: 12px;
             color: var(--text-primary);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
-            margin-bottom: 6px;
+            margin-bottom: 9px;
+            letter-spacing: 0.01em;
         }
-        .position-meta {
+        .position-details {
             display: flex;
-            gap: 12px;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .pos-side-badge {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 3px;
+            letter-spacing: 0.06em;
+        }
+        .pos-side-yes {
+            background: rgba(0,255,255,0.12);
+            border: 1px solid rgba(0,255,255,0.35);
+            color: var(--neon-cyan);
+        }
+        .pos-side-no {
+            background: rgba(255,0,255,0.12);
+            border: 1px solid rgba(255,0,255,0.35);
+            color: var(--neon-magenta);
+        }
+        .pos-price-flow {
+            font-family: var(--font-mono);
             font-size: 11px;
             color: var(--text-secondary);
-            font-family: 'JetBrains Mono', monospace;
+            display: flex;
+            align-items: center;
+            gap: 4px;
         }
-        .position-pnl {
-            font-size: 15px;
-            font-family: 'JetBrains Mono', monospace;
-            font-weight: 600;
+        .pos-arrow-up   { color: var(--neon-green); font-size: 9px; }
+        .pos-arrow-down { color: var(--neon-red);   font-size: 9px; }
+        .pos-arrow-flat { color: var(--text-dim);   font-size: 9px; }
+        .pos-size     { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); }
+        .pos-duration { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
+
+        .position-pnl-display { text-align: right; white-space: nowrap; }
+        .pos-pnl-amount {
+            font-family: var(--font-mono);
+            font-size: 17px;
+            font-weight: 700;
+            line-height: 1;
+            margin-bottom: 3px;
         }
-        .position-pnl-pct {
+        .pos-pnl-pct {
+            font-family: var(--font-mono);
             font-size: 11px;
-            font-family: 'JetBrains Mono', monospace;
-            margin-top: 3px;
         }
-        .pnl-pos { color: var(--neon-green); }
-        .pnl-neg { color: var(--neon-red); }
-        .pnl-neu { color: var(--text-secondary); }
+        .pnl-win  { color: var(--neon-green); text-shadow: 0 0 12px rgba(0,255,136,0.45); }
+        .pnl-loss { color: var(--neon-red);   text-shadow: 0 0 12px rgba(255,51,102,0.45); }
+        .pnl-flat { color: var(--text-secondary); }
+
+        /* PnL progress bar at bottom of card */
+        .pos-bar {
+            position: absolute;
+            bottom: 0; left: 0;
+            height: 2px;
+            transition: width 0.6s cubic-bezier(.22,1,.36,1);
+        }
+        .pos-bar.winning { background: linear-gradient(90deg, var(--neon-green), rgba(0,255,136,0.2)); }
+        .pos-bar.losing  { background: linear-gradient(90deg, var(--neon-red),   rgba(255,51,102,0.2)); left: auto; right: 0; }
 
         /* Signal Items */
         .signal-item {
@@ -1336,7 +1386,13 @@ class DashboardServer:
             const list = document.getElementById('positions-list');
             const count = positions.length;
             document.getElementById('positions-count').textContent = count;
-            document.getElementById('positions-badge').textContent = count + ' position' + (count !== 1 ? 's' : '');
+
+            // バッジにトータル含み損益も表示
+            const totalPnl = positions.reduce((s, p) => s + (p.unrealized_pnl || 0), 0);
+            const pnlStr = (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toFixed(2);
+            document.getElementById('positions-badge').textContent =
+                count + ' position' + (count !== 1 ? 's' : '') +
+                (count > 0 ? '  ·  ' + pnlStr : '');
 
             if (!count) {
                 list.innerHTML = '<div class="empty-state">No open positions</div>';
@@ -1348,39 +1404,61 @@ class DashboardServer:
 
         function createPositionElement(pos) {
             const div = document.createElement('div');
-            div.className = 'position-item';
 
-            const pnl = pos.unrealized_pnl || 0;
+            const pnl    = pos.unrealized_pnl     || 0;
             const pnlPct = pos.unrealized_pnl_pct || 0;
-            const pnlClass = pnl > 0.005 ? 'pnl-pos' : pnl < -0.005 ? 'pnl-neg' : 'pnl-neu';
-            const pnlSign = pnl >= 0 ? '+' : '';
-            const side = (pos.side || '').toUpperCase().replace('_', ' ');
-            const sideColor = side.includes('YES') ? 'var(--neon-cyan)' : 'var(--neon-magenta)';
+            const isWin  = pnl >  0.005;
+            const isLoss = pnl < -0.005;
+            div.className = 'position-item ' + (isWin ? 'pos-winning' : isLoss ? 'pos-losing' : 'pos-neutral');
 
-            // Duration
+            const pnlClass = isWin ? 'pnl-win' : isLoss ? 'pnl-loss' : 'pnl-flat';
+            const pnlSign  = pnl >= 0 ? '+' : '';
+
+            const sideUpper  = (pos.side || '').toUpperCase();
+            const isBuyYes   = sideUpper.includes('YES');
+            const sideClass  = isBuyYes ? 'pos-side-yes' : 'pos-side-no';
+            const sideLabel  = isBuyYes ? 'BUY YES' : 'BUY NO';
+
+            // Entry → Current 方向矢印
+            const diff = (pos.current_price || 0) - (pos.entry_price || 0);
+            const arrowClass = diff >  0.002 ? 'pos-arrow-up'
+                             : diff < -0.002 ? 'pos-arrow-down'
+                             : 'pos-arrow-flat';
+            const arrowChar  = diff >  0.002 ? '▲' : diff < -0.002 ? '▼' : '→';
+
+            // 保有時間
             let duration = '';
             if (pos.created_at) {
                 const ms = Date.now() - new Date(pos.created_at).getTime();
-                const h = Math.floor(ms / 3600000);
-                const m = Math.floor((ms % 3600000) / 60000);
+                const h  = Math.floor(ms / 3600000);
+                const m  = Math.floor((ms % 3600000) / 60000);
                 duration = h > 0 ? `${h}h ${m}m` : `${m}m`;
             }
 
+            // PnL バー幅 (10% = 100%)
+            const barW = Math.min(Math.abs(pnlPct) * 500, 100).toFixed(1);
+
             div.innerHTML = `
-                <div class="position-left">
-                    <div class="position-question">${pos.question || 'Unknown'}</div>
-                    <div class="position-meta">
-                        <span style="color:${sideColor}">${side}</span>
-                        <span>ENTRY ${(pos.entry_price * 100).toFixed(1)}%</span>
-                        <span>NOW ${(pos.current_price * 100).toFixed(1)}%</span>
-                        <span>SIZE $${(pos.size || 0).toFixed(2)}</span>
-                        ${duration ? `<span>${duration}</span>` : ''}
+                <div class="position-inner">
+                    <div class="position-info">
+                        <div class="position-question">${pos.question || 'Unknown'}</div>
+                        <div class="position-details">
+                            <span class="pos-side-badge ${sideClass}">${sideLabel}</span>
+                            <span class="pos-price-flow">
+                                <span>${((pos.entry_price || 0) * 100).toFixed(1)}%</span>
+                                <span class="${arrowClass}">${arrowChar}</span>
+                                <span>${((pos.current_price || 0) * 100).toFixed(1)}%</span>
+                            </span>
+                            <span class="pos-size">$${(pos.size || 0).toFixed(2)}</span>
+                            ${duration ? `<span class="pos-duration">${duration}</span>` : ''}
+                        </div>
+                    </div>
+                    <div class="position-pnl-display">
+                        <div class="pos-pnl-amount ${pnlClass}">${pnlSign}$${Math.abs(pnl).toFixed(2)}</div>
+                        <div class="pos-pnl-pct   ${pnlClass}">${pnlSign}${(pnlPct * 100).toFixed(1)}%</div>
                     </div>
                 </div>
-                <div class="position-right">
-                    <div class="position-pnl ${pnlClass}">${pnlSign}$${pnl.toFixed(2)}</div>
-                    <div class="position-pnl-pct ${pnlClass}">${pnlSign}${(pnlPct * 100).toFixed(1)}%</div>
-                </div>
+                ${(isWin || isLoss) ? `<div class="pos-bar ${isWin ? 'winning' : 'losing'}" style="width:${barW}%"></div>` : ''}
             `;
             return div;
         }
