@@ -63,11 +63,12 @@ class TriggerCondition:
         # BUY_NO: YES価格が上がったら買い (NO が安くなる)
         # SELL_YES: YES価格が上がったら売り
         # SELL_NO: YES価格が下がったら売り
-        if self.side == "BUY_YES":
+        side = self.side.upper()
+        if side == "BUY_YES":
             return current_price <= self.target_price
-        elif self.side == "BUY_NO":
+        elif side == "BUY_NO":
             return current_price >= self.target_price
-        elif self.side == "SELL_YES":
+        elif side == "SELL_YES":
             return current_price >= self.target_price
         else:  # SELL_NO
             return current_price <= self.target_price
@@ -380,8 +381,8 @@ class Orchestrator:
         # BUY_NO : モデルが NO を過小評価と判断 → edge = current_price - signal_prob
         #           (YES が高い = NO が安い ほどエッジが大きい)
         # SELL系 : ポジション決済なので常に通す
-        if trigger.side in ("BUY_YES", "BUY_NO"):
-            if trigger.side == "BUY_YES":
+        if trigger.side.upper() in ("BUY_YES", "BUY_NO"):
+            if trigger.side.upper() == "BUY_YES":
                 current_edge = trigger.signal_probability - price
             else:
                 current_edge = price - trigger.signal_probability
