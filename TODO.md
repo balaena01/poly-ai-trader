@@ -8,7 +8,7 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | feat: end_date 30日超のマーケットをスキップ (資金長期ロック防止) |
+| (最新) | fix: end_dateなし・30日超をscanner/orchestrator両方で除外 (GTA VI系対策) |
 | | fix: main.py CLIデフォルト修正 (model→sonnet-4-6, min-edge→0.05) |
 | | fix: LLM JSON解析エラー対策 (_parse_llm_json で正規表現フォールバック追加) |
 | | fix: LightGBM 正則化パラメータ追加 (num_leaves/reg/min_child_samples) |

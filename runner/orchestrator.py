@@ -578,14 +578,14 @@ class Orchestrator:
         if yes_price_now <= 0.15 or yes_price_now >= 0.85:
             return
 
-        # 解決まで30日超のマーケットはスキップ (資金長期ロック防止)
+        # end_date なし (before GTA VI 等) または30日超はスキップ (資金長期ロック防止)
         end_date = getattr(market, 'end_date', None)
-        if end_date:
-            if end_date.tzinfo is None:
-                end_date = end_date.replace(tzinfo=timezone.utc)
-            days_to_end = (end_date - datetime.now(timezone.utc)).total_seconds() / 86400
-            if days_to_end > 30:
-                return
+        if not end_date:
+            return
+        if end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=timezone.utc)
+        if (end_date - datetime.now(timezone.utc)).total_seconds() / 86400 > 30:
+            return
 
         print(f"\n🧠 分析: {question[:50]}...")
 

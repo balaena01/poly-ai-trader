@@ -8,7 +8,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Callable
 from collections import deque
 
@@ -264,6 +264,15 @@ class MarketScanner:
                         if market.liquidity < min_liquidity:
                             continue
                         if market.volume < min_volume:
+                            continue
+
+                        # end_dateなし・30日超は除外 (before GTA VI等の長期・無期限マーケット)
+                        if not market.end_date:
+                            continue
+                        ed = market.end_date
+                        if ed.tzinfo is None:
+                            ed = ed.replace(tzinfo=timezone.utc)
+                        if (ed - datetime.now(timezone.utc)).total_seconds() / 86400 > 30:
                             continue
 
                         # 重複チェック
