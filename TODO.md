@@ -8,6 +8,8 @@
 
 | コミット | 内容 |
 |---|---|
+| `0540b28` | feat: GTC未約定注文の自動キャンセル機能実装 (60分超でキャンセル+ポジション削除) |
+| `07916ff` | fix: サイクルごとにCLOB残高を再取得してRiskManagerに反映 |
 | `13022e3` | fix: FOK→GTC + BUY_NO異常検知ログ修正 (live_price vs expected比較に修正) |
 | `f309fc7` | fix: allowance表示を allowances辞書から取得するよう修正 (allowance=∞表示) |
 | `a7eb267` | fix: update_balance_allowance → get の順で呼び出し (allowance同期+正確なログ) |
@@ -43,6 +45,19 @@
 | `9a7a8e8` | ML自動再学習 + ホットスワップ実装 |
 | `a4f6ef8` | 学習層 (Factor Manager) の機能不全修正 |
 | `48501f7` | ドキュメント齟齬修正 + バグ修正 |
+
+---
+
+## ✅ 解決済み: GTC未約定注文の放置問題
+
+GTC注文は約定するまでオーダーブックに残り続けるため、放置すると古い注文が溜まる。
+
+**対応:** 各サイクルで CLOB の注文ステータスを確認し、60分超の未約定注文を自動キャンセル。
+- Position に `order_id` / `order_filled` フィールドを追加
+- `_check_pending_gtc_orders()` を各サイクルで実行
+- MATCHED → mark_order_filled / CANCELLED → ポジション削除 / LIVE+60分超 → 自動キャンセル
+
+**既存ポジション（実装前に記録されたもの）:** `order_filled=True`（デフォルト）で読み込まれ自動キャンセル対象外。マーケット解決時に通常通り処理される。
 
 ---
 
