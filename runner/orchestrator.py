@@ -607,8 +607,8 @@ class Orchestrator:
 
         # エクスポージャー上限チェック (既存トリガーがない新規マーケットはLLM分析をスキップ)
         if not existing_trigger:
-            exposure_ratio = self.risk_manager.get_exposure_ratio()
-            if exposure_ratio >= self.risk_manager.max_total_exposure:
+            if not self.risk_manager.can_add_position(self.risk_manager.min_position * 3):
+                exposure_ratio = self.risk_manager.get_exposure_ratio()
                 print(f"   ⏭️ スキップ (エクスポージャー上限 {exposure_ratio:.0%}/{self.risk_manager.max_total_exposure:.0%}): {question[:40]}")
                 return
 
