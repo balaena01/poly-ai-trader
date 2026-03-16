@@ -513,7 +513,21 @@ class Orchestrator:
                 self.stats["cycles"] += 1
                 print(f"\n{'='*60}")
                 print(f"📊 サイクル #{self.stats['cycles']} - {datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC")
-                
+
+                # サイクルごとに CLOB から実残高を再取得してリスク管理に反映
+                try:
+                    from client import PolyClient
+                    _pc = PolyClient()
+                    _pc.connect()
+                    _balance = _pc.get_balance()
+                    if _balance > 0:
+                        self.risk_manager.update_balance(_balance)
+                        if self.dashboard:
+                            await self.dashboard.update_state("balance", _balance)
+                        print(f"💰 残高更新: ${_balance:.2f} USDC")
+                except Exception as _e:
+                    pass  # 取得失敗時は前回値を継続使用
+
                 # マーケット再スキャン (10サイクルごと)
                 if self.stats["cycles"] % 10 == 0:
                     markets = await self._scan_markets()
@@ -542,7 +556,6 @@ class Orchestrator:
                 if self.dashboard:
                     stats = self.position_tracker.get_stats()
                     await self.dashboard.update_state("pnl", stats["total_pnl"])
-                    # balance は起動時に設定済み (上書きしない)
                 
                 # 次の間隔を決定
                 interval = self._get_analysis_interval(markets)
