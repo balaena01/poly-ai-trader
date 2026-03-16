@@ -181,10 +181,12 @@ class PolyClient:
             # USDC allowance を更新 (未設定だと注文が "not enough allowance" で弾かれる)
             try:
                 from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
-                self._client.update_balance_allowance(
+                result = self._client.update_balance_allowance(
                     params=BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
                 )
-                print("✅ Polymarket接続成功 (認証済み・allowance更新完了)")
+                balance = float(result.get("balance", 0)) / 1e6 if result else 0
+                allowance = float(result.get("allowance", 0)) / 1e6 if result else 0
+                print(f"✅ Polymarket接続成功 (認証済み) balance=${balance:.2f} allowance=${allowance:.2f}")
             except Exception as ae:
                 print(f"✅ Polymarket接続成功 (認証済み) ⚠️ allowance更新失敗: {ae}")
 
@@ -381,7 +383,9 @@ class PolyClient:
                 # 指値注文
                 # amount を size に変換 (shares = amount / price)
                 # maker amount: 小数2桁まで, taker amount (size): 小数4桁まで
+                # price: 小数4桁まで (浮動小数点誤差 1-0.66=0.3399... 対策)
                 amount = round(amount, 2)
+                price = round(price, 4)
                 size = round(amount / price, 4)
                 order = OrderArgs(
                     token_id=token_id,
