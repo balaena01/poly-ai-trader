@@ -102,6 +102,12 @@ python main.py run --live
   - lookahead bias修正・マーケット取得修正済み。初回学習が必要
   - 学習後に `python scripts/backtest.py --days 90 --limit 100` でバックテスト検証
 
+- [ ] **同一イベントへの集中リスク対策 (相関グループ管理)**
+  - 現状: "GTA VI before X?" 系マーケットが複数トリガーに並ぶと実質1ポジション分のリスクになる
+  - 対策案: マーケットの `question` からイベントキーワードを抽出し、同一グループへのエクスポージャーをグループ単位で上限管理
+  - 例: "GTA VI" グループは最大1件、または合計サイズ上限を設ける
+  - 実装場所: `runner/orchestrator.py` の `_analyze_and_set_triggers()` でシグナルをグループ化してフィルタリング
+
 
 
 - [x] **実運用ログの整備** — 対応済み (`data/trade_log.jsonl`)
