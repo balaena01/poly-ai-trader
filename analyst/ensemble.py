@@ -21,7 +21,7 @@ class EnsembleSignal:
     market_id: str
     token_id: str
     question: str
-    
+
     # 各シグナル
     llm_prob: float
     llm_conf: float
@@ -29,15 +29,18 @@ class EnsembleSignal:
     ml_conf: float
     orderflow_signal: float
     orderflow_conf: float
-    
+
     # Bayesian統合結果
     bayesian_result: BayesianResult
-    
+
     # 最終判断
     action: Action
     final_probability: float
     edge: float
     confidence: float
+
+    # LLM推論テキスト (Auditorのハルシネーション検出に使用)
+    llm_reasoning: str = ""
     
     @property
     def is_tradeable(self) -> bool:
@@ -170,6 +173,7 @@ class EnsembleAnalyst:
         
         llm_prob = llm_result.get("probability", 0.5) if llm_result else 0.5
         llm_conf = llm_result.get("confidence", 0.5) if llm_result else 0.5
+        llm_reasoning = llm_result.get("reasoning", "") if llm_result else ""
         
         signals.append(SignalSource(
             name="LLM",
@@ -265,6 +269,7 @@ class EnsembleAnalyst:
             final_probability=final_prob,
             edge=edge,
             confidence=confidence,
+            llm_reasoning=llm_reasoning,
         )
     
     async def analyze_markets(

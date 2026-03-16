@@ -9,7 +9,7 @@ Orchestrator - フル統合ランナー
 import asyncio
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Dict, Optional, Set
 from enum import Enum
@@ -46,13 +46,13 @@ class TriggerCondition:
     target_price: float  # この価格条件で発火 (YES価格ベース)
     size: float
     signal_confidence: float
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: Optional[datetime] = None
-    
+
     def is_expired(self) -> bool:
         if not self.expires_at:
             return False
-        return datetime.now() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
     
     def should_execute(self, current_price: float) -> bool:
         if self.is_expired():
@@ -157,7 +157,8 @@ class Orchestrator:
         
         # トリガー管理
         self.active_triggers: Dict[str, TriggerCondition] = {}
-        self.executed_markets: Set[str] = set()
+        # 再起動後もポジション重複を防ぐため、既存のオープンポジションを読み込む
+        self.executed_markets: Set[str] = set(self.position_tracker.get_open_market_ids())
         
         # 状態
         self._running = False
@@ -167,6 +168,9 @@ class Orchestrator:
         # ML再学習管理
         self._resolved_since_last_training: int = 0
         self._retraining: bool = False
+
+        # サイクルごとのトリガー設定数 (max_trades_per_cycle 上限管理)
+        self._triggers_this_cycle: int = 0
 
         # 統計
         self.stats = {
@@ -431,17 +435,21 @@ class Orchestrator:
             try:
                 self.stats["cycles"] += 1
                 print(f"\n{'='*60}")
-                print(f"📊 サイクル #{self.stats['cycles']} - {datetime.now().strftime('%H:%M:%S')}")
+                print(f"📊 サイクル #{self.stats['cycles']} - {datetime.now(timezone.utc).strftime('%H:%M:%S')} UTC")
                 
                 # マーケット再スキャン (10サイクルごと)
                 if self.stats["cycles"] % 10 == 0:
                     markets = await self._scan_markets()
                 
-                # 各マーケットを分析
+                # 各マーケットを分析 (サイクルごとのトリガー上限を適用)
+                self._triggers_this_cycle = 0
                 for market in markets:
                     if not self._running:
                         break
-                    
+                    if self._triggers_this_cycle >= self.config.max_trades_per_cycle:
+                        print(f"   ⏸️ トリガー上限到達 ({self.config.max_trades_per_cycle}件/サイクル)")
+                        break
+
                     await self._analyze_market(market)
                 
                 # 解決済みマーケットをチェック
@@ -550,6 +558,7 @@ class Orchestrator:
                 question=question,
                 liquidity=getattr(market, 'liquidity', 0),
                 end_date=getattr(market, 'end_date', None),
+                llm_reasoning=signal.llm_reasoning,
                 original_confidence=signal.confidence,
             )
             
@@ -643,15 +652,18 @@ class Orchestrator:
             target_price=target_price,
             size=size,
             signal_confidence=signal.confidence,
-            expires_at=datetime.now() + timedelta(minutes=self.config.trigger_expiry_minutes),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=self.config.trigger_expiry_minutes),
         )
         
         # YES token で監視 (WebSocket は YES 価格を送ってくる)
         self.active_triggers[watch_token_id] = trigger
-        
+
         # ペンディングエクスポージャーに追加
         self.risk_manager.add_pending_exposure(size)
-        
+
+        # サイクル内トリガー数をカウント
+        self._triggers_this_cycle += 1
+
         print(f"   ⏰ トリガー設定: {signal.action.value} @ {target_price:.4f}")
         print(f"      サイズ: ${size:.2f} | 有効期限: {self.config.trigger_expiry_minutes}分")
         
@@ -795,7 +807,10 @@ class Orchestrator:
                     except:
                         continue
                 
-                time_to_res = end_date - datetime.now(end_date.tzinfo if hasattr(end_date, 'tzinfo') else None)
+                now = datetime.now(timezone.utc)
+                if end_date.tzinfo is None:
+                    end_date = end_date.replace(tzinfo=timezone.utc)
+                time_to_res = end_date - now
                 if time_to_res < min_time_to_resolution:
                     min_time_to_resolution = time_to_res
         

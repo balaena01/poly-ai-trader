@@ -6,7 +6,7 @@ Auditor
 - フラグごとに信頼度ペナルティ
 """
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 from enum import Enum
 import re
@@ -132,7 +132,11 @@ class Auditor:
         
         # ========== 解決時間チェック ==========
         if end_date:
-            time_to_resolution = (end_date - datetime.now()).total_seconds() / 60
+            now = datetime.now(timezone.utc)
+            # end_date がナイーブ (tzinfo なし) なら UTC とみなす
+            if end_date.tzinfo is None:
+                end_date = end_date.replace(tzinfo=timezone.utc)
+            time_to_resolution = (end_date - now).total_seconds() / 60
             if time_to_resolution < self.min_time_to_resolution:
                 flags.append(AuditFlag.NEAR_RESOLUTION)
                 details["time_to_resolution"] = f"{time_to_resolution:.0f}分 < {self.min_time_to_resolution}分"
@@ -219,7 +223,10 @@ class Auditor:
         
         # 解決時間
         if end_date:
-            time_to_resolution = (end_date - datetime.now()).total_seconds() / 60
+            now = datetime.now(timezone.utc)
+            if end_date.tzinfo is None:
+                end_date = end_date.replace(tzinfo=timezone.utc)
+            time_to_resolution = (end_date - now).total_seconds() / 60
             if time_to_resolution < self.min_time_to_resolution:
                 return False
         
