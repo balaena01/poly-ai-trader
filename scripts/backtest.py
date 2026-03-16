@@ -379,8 +379,8 @@ class Backtester:
             history = [p.price for p in price_points[:analysis_idx]]
             entry_price = history[-1]
 
-            # 価格が 0 か 1 に張り付いていたらスキップ (解決直前のデータ汚染)
-            if entry_price <= 0.01 or entry_price >= 0.99:
+            # 価格が極端な場合はスキップ (解決直前のデータ汚染 / 長射程マーケット)
+            if entry_price <= 0.05 or entry_price >= 0.95:
                 return "skip"
 
             # 解決結果 (ResolvedMarket.outcome は既に "YES"/"NO" に正規化済み)

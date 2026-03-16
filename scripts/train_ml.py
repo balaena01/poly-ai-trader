@@ -225,8 +225,8 @@ async def collect_training_data(
                 history = [p.price for p in price_points[:analysis_idx]]
                 yes_price = history[-1]  # 分析時点の YES 価格
 
-                # 価格が既に0/1に張り付いていたらスキップ (解決直前データ汚染)
-                if yes_price <= 0.01 or yes_price >= 0.99:
+                # 価格が極端な場合はスキップ (解決直前データ汚染 / 長射程マーケット)
+                if yes_price <= 0.05 or yes_price >= 0.95:
                     continue
 
                 # 4. 取引履歴 (buy_volume_ratio / order_flow_imbalance 用)

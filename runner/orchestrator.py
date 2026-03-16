@@ -1111,8 +1111,8 @@ class Orchestrator:
                         history = [p.price for p in price_points[:analysis_idx]]
                         yes_price = history[-1]
 
-                        # 価格が既に解決値に張り付いていたらスキップ
-                        if yes_price <= 0.01 or yes_price >= 0.99:
+                        # 価格が極端な場合はスキップ (解決直前データ汚染 / 長射程マーケット)
+                        if yes_price <= 0.05 or yes_price >= 0.95:
                             continue
 
                         # 取引履歴
