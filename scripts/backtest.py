@@ -188,11 +188,15 @@ class Backtester:
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.config.days)
         result: List[ResolvedMarket] = []
         offset = 0
-        fetch_limit = 200  # 1リクエストあたり
+        fetch_limit = 50  # 1リクエストあたり (重いので小さめ)
+        timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+
+        print("🌐 Gamma API から解決済みマーケットを取得中...")
 
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 while len(result) < self.config.limit:
+                    print(f"   ページ取得中 (offset={offset}, 取得済み={len(result)})...")
                     resp = await client.get(
                         f"{GAMMA_API}/markets",
                         params={
