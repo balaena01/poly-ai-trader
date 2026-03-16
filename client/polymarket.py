@@ -263,10 +263,13 @@ class PolyClient:
         """トークンの現在価格を取得"""
         if not self._client:
             return None
-        
+
         try:
-            price = self._client.get_price(token_id, side=side)
-            return float(price) if price else None
+            result = self._client.get_price(token_id, side=side)
+            # py-clob-client は {'price': '0.65'} 形式の dict を返す
+            if isinstance(result, dict):
+                result = result.get("price")
+            return float(result) if result is not None else None
         except Exception as e:
             print(f"価格取得エラー: {e}")
             return None
@@ -275,10 +278,13 @@ class PolyClient:
         """中間価格を取得"""
         if not self._client:
             return None
-        
+
         try:
-            mid = self._client.get_midpoint(token_id)
-            return float(mid) if mid else None
+            result = self._client.get_midpoint(token_id)
+            # py-clob-client は {'mid': '0.65'} 形式の dict を返す
+            if isinstance(result, dict):
+                result = result.get("mid")
+            return float(result) if result is not None else None
         except Exception as e:
             print(f"中間価格取得エラー: {e}")
             return None
