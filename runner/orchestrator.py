@@ -1435,9 +1435,10 @@ class Orchestrator:
 
             await self.dashboard.push_positions(positions_data)
 
-            # ポートフォリオ集計
-            total_unrealized = round(sum(p.get("unrealized_pnl", 0) for p in positions_data), 2)
-            total_exposure   = round(sum(p.get("size", 0) for p in positions_data), 2)
+            # ポートフォリオ集計 (PENDING は株式未保有のため除外)
+            filled_data      = [p for p in positions_data if p.get("order_filled") is True]
+            total_unrealized = round(sum(p.get("unrealized_pnl", 0) for p in filled_data), 2)
+            total_exposure   = round(sum(p.get("size", 0) for p in filled_data), 2)
             portfolio        = round(self.risk_manager.current_balance + total_exposure + total_unrealized, 2)
             await self.dashboard.update_state("unrealized_pnl", total_unrealized)
             await self.dashboard.update_state("exposure", total_exposure)
