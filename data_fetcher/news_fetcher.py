@@ -453,63 +453,182 @@ class NewsFetcher:
         print(f"💾 保存: {filepath}")
 
 
-# Google News RSS (Scrapling不要)
+# Google News RSS (Scrapling不要) - レガシー、後方互換のため残す
 class GoogleNewsFetcher:
-    """Google News RSS フェッチャー (軽量版)"""
-    
-    RSS_URL = "https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
-    
-    async def search(self, query: str, limit: int = 10) -> List[NewsArticle]:
+    """
+    DDG HTML検索 + Scrapling による記事本文取得フェッチャー。
+    クラス名は後方互換のため GoogleNewsFetcher のまま。
+    """
+
+    _DDG_URL = "https://html.duckduckgo.com/html/?q={query}"
+    _HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        )
+    }
+    # 本文取得をスキップするドメイン (paywall / JS必須サイト)
+    _SKIP_DOMAINS = {
+        "wsj.com", "ft.com", "bloomberg.com", "nytimes.com",
+        "washingtonpost.com", "rockstargames.com",
+    }
+
+    def _extract_keywords(self, question: str) -> str:
         """
-        Google Newsで検索
-        
+        マーケット質問から検索キーワードを抽出。
+        - 固有名詞 (大文字語・連続大文字) を優先
+        - ドル金額・年号を保持
+        - 汎用ストップワードを除去
+        """
+        import re as _re
+        stop = {
+            "will", "be", "the", "a", "an", "in", "on", "at", "to", "of",
+            "for", "before", "after", "by", "is", "are", "was", "were",
+            "has", "have", "had", "do", "does", "did", "and", "or", "but",
+            "with", "from", "this", "that", "it", "he", "she", "they", "we",
+            "which", "who", "when", "where", "how", "what", "than", "their",
+            "its", "ever", "any", "reach", "above", "below", "hit", "least",
+            "most", "more", "less", "get", "win", "lose", "become", "remain",
+            "first", "last", "next", "new", "old", "end", "start", "begin",
+            "during", "until", "through", "than", "over", "under",
+        }
+        # 大文字語の連続を固有名詞として抽出 (例: "GTA VI", "US GDP")
+        named = _re.findall(r'\b[A-Z][A-Z0-9]*(?:\s+[A-Z][A-Z0-9]*)+\b', question)
+        # 大文字始まり単語 (例: "Bitcoin", "Trump", "Rockstar")
+        caps = _re.findall(r'\b[A-Z][a-z]{2,}\b', question)
+        # ドル金額 (例: "$100k", "$1M")
+        amounts = _re.findall(r'\$[\d,.]+[kKmMbB]?', question)
+        # 年号
+        years = _re.findall(r'\b20\d{2}\b', question)
+
+        parts = named + caps + amounts + years
+        # 重複除去しつつ順序維持
+        seen: set = set()
+        unique = []
+        for p in parts:
+            if p not in seen:
+                seen.add(p)
+                unique.append(p)
+
+        # named以外の残りトークンで補完 (ストップワード除去)
+        if len(unique) < 3:
+            tokens = _re.findall(r"[\w']+", question)
+            for t in tokens:
+                if t.lower() not in stop and len(t) > 2 and t not in seen:
+                    seen.add(t)
+                    unique.append(t)
+                if len(unique) >= 5:
+                    break
+
+        return " ".join(unique[:6])
+
+    def _should_skip(self, url: str) -> bool:
+        import re as _re
+        m = _re.search(r'https?://(?:www\.)?([^/]+)', url)
+        if not m:
+            return False
+        domain = m.group(1)
+        return any(skip in domain for skip in self._SKIP_DOMAINS)
+
+    async def search(self, question: str, limit: int = 10) -> List[NewsArticle]:
+        """
+        DDG HTML検索でURLを取得し、Scraplingで本文をフェッチして返す。
+
         Args:
-            query: 検索クエリ
-            limit: 最大件数
-        
-        Returns:
-            List[NewsArticle]
+            question: マーケット質問文 (キーワード抽出に使用)
+            limit: 最大返却件数
         """
+        import re as _re
         import urllib.parse
-        url = self.RSS_URL.format(query=urllib.parse.quote(query))
-        
-        articles = []
-        
-        async with httpx.AsyncClient(timeout=30) as client:
+        import asyncio as _asyncio
+
+        keywords = self._extract_keywords(question)
+        print(f"   [news] keywords: {keywords}")
+
+        ddg_url = self._DDG_URL.format(query=urllib.parse.quote_plus(keywords))
+
+        # ── DDG HTML から記事URLを取得 ─────────────────────────────────────
+        raw_results: List[tuple] = []  # (title, url)
+        try:
             try:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                
-                # 簡易XMLパース
-                import re
-                items = re.findall(r'<item>(.*?)</item>', resp.text, re.DOTALL)
-                
-                for item in items[:limit]:
-                    title_match = re.search(r'<title>(.*?)</title>', item)
-                    link_match = re.search(r'<link>(.*?)</link>', item)
-                    pub_match = re.search(r'<pubDate>(.*?)</pubDate>', item)
-                    source_match = re.search(r'<source[^>]*>(.*?)</source>', item)
-                    
-                    if title_match and link_match:
-                        # 日付パース
-                        pub_date = None
-                        if pub_match:
-                            try:
-                                from email.utils import parsedate_to_datetime
-                                pub_date = parsedate_to_datetime(pub_match.group(1))
-                            except:
-                                pass
-                        
-                        articles.append(NewsArticle(
-                            title=title_match.group(1).replace('&amp;', '&'),
-                            url=link_match.group(1),
-                            source=source_match.group(1) if source_match else "Google News",
-                            published=pub_date,
+                from scrapling.fetchers import Fetcher as _Fetcher
+                page = await _asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: _Fetcher.get(ddg_url, stealthy_headers=True, timeout=15),
+                )
+                for el in page.css(".result__a")[:limit + 5]:
+                    href = el.attrib.get("href", "")
+                    title = (el.text or "").strip()
+                    m = _re.search(r"uddg=([^&]+)", href)
+                    if m:
+                        actual_url = urllib.parse.unquote(m.group(1))
+                        raw_results.append((title, actual_url))
+            except Exception:
+                # Scrapling失敗 → httpxフォールバック
+                async with httpx.AsyncClient(
+                    timeout=15, headers=self._HEADERS
+                ) as client:
+                    r = await client.get(ddg_url)
+                    for m in _re.finditer(r'uddg=([^&"]+)', r.text):
+                        actual_url = urllib.parse.unquote(m.group(1))
+                        title_m = _re.search(
+                            r'class="result__a"[^>]*>(.*?)</a>', r.text
+                        )
+                        raw_results.append((
+                            title_m.group(1) if title_m else actual_url,
+                            actual_url,
                         ))
-                
-            except Exception as e:
-                print(f"❌ Google News エラー: {e}")
-        
+                        if len(raw_results) >= limit + 5:
+                            break
+        except Exception as e:
+            print(f"   [news] DDG error: {e}")
+
+        if not raw_results:
+            return []
+
+        # ── Scrapling で各記事の本文フェッチ ─────────────────────────────
+        articles: List[NewsArticle] = []
+        try:
+            from scrapling.fetchers import Fetcher as _Fetcher
+            scrapling_ok = True
+        except Exception:
+            scrapling_ok = False
+
+        for title, url in raw_results[:limit]:
+            if self._should_skip(url):
+                articles.append(NewsArticle(title=title, url=url, source=url))
+                continue
+
+            body = ""
+            if scrapling_ok:
+                try:
+                    page = await _asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda u=url: _Fetcher.get(
+                            u, stealthy_headers=True, timeout=12
+                        ),
+                    )
+                    paras = page.css("p")
+                    body = " ".join(
+                        p.text for p in paras
+                        if p.text and len(p.text) > 60
+                    )[:1000]
+                except Exception:
+                    pass  # フェッチ失敗 → タイトルのみ
+
+            articles.append(NewsArticle(
+                title=title,
+                url=url,
+                source=url,
+                summary=body,
+            ))
+
+            if len(articles) >= limit:
+                break
+
+        fetched = sum(1 for a in articles if a.summary)
+        print(f"   [news] {len(articles)} articles ({fetched} with body)")
         return articles
 
 

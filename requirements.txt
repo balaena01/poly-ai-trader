@@ -29,3 +29,7 @@ web3>=6.0.0
 # Dashboard
 fastapi>=0.100.0
 uvicorn>=0.23.0
+
+# Web scraping (ニュース本文取得)
+scrapling>=0.4.0
+playwright>=1.40.0
