@@ -458,7 +458,11 @@ class Orchestrator:
                 )
                 
                 # 実際の約定価格 (CLOB ask/bid に更新済みの場合はそちらを使う)
-                entry_price = result.executed_price if result.executed_price else price
+                # position_tracker は entry_price を常に YES価格として扱う。
+                # execute() は BUY_NO の executed_price を NO価格で返すので YES換算する。
+                entry_price = result.executed_price if result.executed_price is not None else price
+                if "NO" in trigger.side.upper() and result.executed_price is not None:
+                    entry_price = 1.0 - result.executed_price  # NO価格 → YES換算
 
                 # ポジション記録 (GTC注文はorder_id保存・未約定フラグ付き)
                 self.position_tracker.record_trade(

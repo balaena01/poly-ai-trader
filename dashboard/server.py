@@ -976,7 +976,12 @@ class DashboardServer:
         const sideClass = isYes ? 'yes' : 'no';
         const sideLabel = isYes ? 'BUY YES' : 'BUY NO';
 
-        const diff = (pos.current_price || 0) - (pos.entry_price || 0);
+        // BUY_NO は entry/current を NO価格で表示 (1 - YES価格)
+        const dispEntry   = isYes ? (pos.entry_price   || 0) : (1 - (pos.entry_price   || 0));
+        const dispCurrent = isYes ? (pos.current_price || 0) : (1 - (pos.current_price || 0));
+
+        // BUY_NO: NO価格が上がれば有利なので矢印方向もNO基準
+        const diff = dispCurrent - dispEntry;
         const arrowCls  = diff >  0.002 ? 'up' : diff < -0.002 ? 'dn' : 'flat';
         const arrowChar = diff >  0.002 ? '▲' : diff < -0.002 ? '▼' : '▶';
 
@@ -1010,9 +1015,9 @@ class DashboardServer:
                 <div class="pos-meta">
                     <span class="pos-side ${sideClass}">${sideLabel}</span>
                     <span class="pos-prices">
-                        <span>${((pos.entry_price||0)*100).toFixed(1)}¢</span>
+                        <span>${(dispEntry*100).toFixed(1)}¢</span>
                         <span class="pos-arrow ${arrowCls}">${arrowChar}</span>
-                        <span>${((pos.current_price||0)*100).toFixed(1)}¢</span>
+                        <span>${(dispCurrent*100).toFixed(1)}¢</span>
                     </span>
                     <span class="pos-size">$${(pos.size||0).toFixed(2)}</span>
                     ${age ? `<span class="pos-age">${age}</span>` : ''}
