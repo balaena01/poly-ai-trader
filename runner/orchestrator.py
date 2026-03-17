@@ -477,6 +477,7 @@ class Orchestrator:
                 self.position_tracker.record_trade(
                     market_id=trigger.market_id,
                     token_id=trigger.token_id,
+                    yes_token_id=trigger.watch_token_id,  # 常にYES token (価格表示用)
                     question=trigger.question,
                     side=trigger.side,
                     entry_price=entry_price,
@@ -1439,14 +1440,20 @@ class Orchestrator:
                     _pc = PolyClient()
                     _pc.connect(read_only=True)
                     for pos in missing:
-                        mid_price = _pc.get_midpoint(pos.token_id)
+                        # yes_token_id があれば常にYES token で取得 (BUY_NO でも YES価格)
+                        fetch_token = pos.yes_token_id or pos.token_id
+                        mid_price = _pc.get_midpoint(fetch_token)
                         if mid_price is not None:
-                            side_upper = pos.side.upper()
-                            if "NO" in side_upper:
-                                # NO token の midpoint → YES 価格に変換
-                                current_prices[pos.market_id] = 1.0 - mid_price
-                            else:
+                            if pos.yes_token_id:
+                                # YES token で取得済み → そのまま YES 価格
                                 current_prices[pos.market_id] = mid_price
+                            else:
+                                # 旧レコード: side で判定 (NO token なら反転)
+                                side_upper = pos.side.upper()
+                                if "NO" in side_upper:
+                                    current_prices[pos.market_id] = 1.0 - mid_price
+                                else:
+                                    current_prices[pos.market_id] = mid_price
                 except Exception:
                     pass  # 取得失敗時はフォールバック
 

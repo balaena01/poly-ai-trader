@@ -33,6 +33,9 @@ class Position:
     status: PositionStatus = PositionStatus.OPEN
     created_at: datetime = field(default_factory=datetime.now)
 
+    # YES token ID (スキャン外ポジションの現在価格取得に使用; 常にYES token)
+    yes_token_id: Optional[str] = None
+
     # GTC注文追跡
     order_id: Optional[str] = None        # CLOBのorder ID
     order_filled: bool = True             # False = GTC未約定
@@ -75,6 +78,7 @@ class Position:
             "id": self.id,
             "market_id": self.market_id,
             "token_id": self.token_id,
+            "yes_token_id": self.yes_token_id,
             "question": self.question,
             "side": self.side,
             "entry_price": self.entry_price,
@@ -94,6 +98,7 @@ class Position:
             id=data["id"],
             market_id=data["market_id"],
             token_id=data["token_id"],
+            yes_token_id=data.get("yes_token_id"),
             question=data["question"],
             side=data["side"],
             entry_price=data["entry_price"],
@@ -127,6 +132,7 @@ class PositionTracker:
         size: float,
         order_id: Optional[str] = None,
         order_filled: bool = True,
+        yes_token_id: Optional[str] = None,
     ) -> Position:
         """トレード記録"""
         import uuid
@@ -137,6 +143,7 @@ class PositionTracker:
             id=pos_id,
             market_id=market_id,
             token_id=token_id,
+            yes_token_id=yes_token_id,
             question=question,
             side=side,
             entry_price=entry_price,
