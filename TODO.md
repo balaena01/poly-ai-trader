@@ -8,6 +8,9 @@
 
 | コミット | 内容 |
 |---|---|
+| `fb17676` | feat: ポートフォリオ表示追加 (Portfolio/Unrealized PnL/Exposure を stats bar に) |
+| `c86751c` | fix: GTC約定検出の改善 (get_orders()不在検出 + None=約定済み + FILLED対応) |
+| `01d390f` | fix: BUY_NO entry_price が NO価格で保存されPnL計算が壊れるバグ修正 |
 | `f10f6bd` | fix: ポジション含み損益がスキャン外マーケットで$0になるバグ修正 (CLOB midpoint直接取得) |
 | `347aed2` | feat: ダッシュボード完全リデザイン "Operator Terminal" + GTC Pending/Active 分離表示 |
 | `913776f` | fix: 再起動時に既存ポジションをRiskManagerに復元 (エクスポージャー誤認防止) |
