@@ -157,8 +157,9 @@ class LLMAnalyst:
         self.model = MODELS.get(model, model)
         self.fallback_model = MODELS.get(fallback_model, fallback_model) if fallback_model else None
         
-        # デバッグ出力を抑制
-        litellm.suppress_debug_info = True
+        # デバッグ出力 (一時的に有効化)
+        litellm.suppress_debug_info = False
+        litellm.set_verbose = True
         
         print(f"🤖 LLM: {self.model}")
     
@@ -238,6 +239,9 @@ JSON形式で回答してください。
 """
         
         try:
+            print(f"[DEBUG] model={self.model}")
+            print(f"[DEBUG] system_len={len(self.SYSTEM_PROMPT)}")
+            print(f"[DEBUG] user_prompt={user_prompt[:300]}")
             response = await acompletion(
                 model=self.model,
                 messages=[
