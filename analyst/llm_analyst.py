@@ -135,7 +135,7 @@ class LLMAnalyst:
         """Claude Code CLI をサブプロセスで呼び出す"""
         cmd = [
             "claude",
-            "-p", prompt,
+            "-p", "-",            # stdin からプロンプトを読む (引数長制限を回避)
             "--model", self.model,
             "--output-format", "json",
             "--dangerously-skip-permissions",
@@ -143,14 +143,22 @@ class LLMAnalyst:
         if self.use_continue:
             cmd.append("--continue")
 
+        # ANTHROPIC_API_KEY を env から除外: セットされていると CLI がそれを使って
+        # 直接 API 呼び出しをしてしまい、キーのモデル制限に引っかかる。
+        # 除外することで CLI 自身の OAuth 認証 (~/.claude/) を使わせる。
+        import os
+        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         try:
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
+                proc.communicate(input=prompt.encode("utf-8")),
                 timeout=self.timeout,
             )
         except asyncio.TimeoutError:
