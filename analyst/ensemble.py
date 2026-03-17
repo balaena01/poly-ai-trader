@@ -212,13 +212,17 @@ class EnsembleAnalyst:
             ml_result = self.ml_analyst.predict(features)
             ml_prob = ml_result.probability
             ml_conf = ml_result.confidence
-            print(f"    ML: prob={ml_prob:.0%} conf={ml_conf:.0%}")
+
+            # conf が低いほど accuracy を 0.5 に近づける (0.5 + 0.22 × conf)
+            # conf=1.0 → 0.72, conf=0.5 → 0.61, conf=0.3 → 0.567
+            ml_accuracy = 0.5 + 0.22 * ml_conf
+            print(f"    ML: prob={ml_prob:.0%} conf={ml_conf:.0%} (eff_accuracy={ml_accuracy:.3f})")
 
             signals.append(SignalSource(
                 name="LightGBM",
                 probability=ml_prob,
                 confidence=ml_conf,
-                accuracy=0.72,  # Valid AUC に合わせて設定
+                accuracy=ml_accuracy,
             ))
         
         # ========== Orderflow 分析 ==========
