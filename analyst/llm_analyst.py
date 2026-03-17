@@ -75,20 +75,16 @@ class Signal:
 #   ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY
 
 MODELS = {
-    # ========== Anthropic (最新) ==========
-    # 最新世代 (2026年3月時点)
-    "claude-opus-4.6": "claude-opus-4-6",           # 最高性能、エージェント/コーディング
-    "claude-sonnet-4.6": "claude-sonnet-4-6",       # 速度と性能のバランス
-    "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",         # 最速、低コスト ($1/MTok in)
-
-    # レガシー (まだ利用可能)
+    # ========== Anthropic (公開API対応モデル) ==========
+    # ※ claude-opus-4-6 / claude-sonnet-4-6 は Claude Code 内部 ID のため使用不可
+    "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",  # 最速・低コスト
     "claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
     "claude-opus-4.5": "claude-opus-4-5-20251101",
     "claude-sonnet-4": "claude-sonnet-4-20250514",
     "claude-opus-4": "claude-opus-4-20250514",
 
-    # 旧世代 (非推奨)
-    "claude-3-haiku": "claude-3-haiku-20240307",    # 非推奨、安い
+    # 旧世代
+    "claude-3-haiku": "claude-3-haiku-20240307",    # 安い
     
     # ========== OpenAI ==========
     "gpt-4o": "gpt-4o",
@@ -157,9 +153,8 @@ class LLMAnalyst:
         self.model = MODELS.get(model, model)
         self.fallback_model = MODELS.get(fallback_model, fallback_model) if fallback_model else None
         
-        # デバッグ出力 (一時的に有効化)
-        litellm.suppress_debug_info = False
-        litellm.set_verbose = True
+        # デバッグ出力を抑制
+        litellm.suppress_debug_info = True
         
         print(f"🤖 LLM: {self.model}")
     
@@ -239,9 +234,6 @@ JSON形式で回答してください。
 """
         
         try:
-            print(f"[DEBUG] model={self.model}")
-            print(f"[DEBUG] system_len={len(self.SYSTEM_PROMPT)}")
-            print(f"[DEBUG] user_prompt={user_prompt[:300]}")
             response = await acompletion(
                 model=self.model,
                 messages=[
