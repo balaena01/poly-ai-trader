@@ -225,6 +225,34 @@ class EnsembleAnalyst:
                 accuracy=ml_accuracy,
             ))
         
+        # ========== 方向一致チェック ==========
+        # LLM と ML が両方揃っているとき、市場価格に対する方向が一致しているか確認する。
+        # 一方が「割安 (買い)」、他方が「割高 (売り)」に割れている場合は
+        # 確率を平均化しても意味がなく、エッジなしとして扱う。
+        if self.use_ml and self.ml_analyst and prices:
+            llm_bullish = llm_prob > market.yes_price
+            ml_bullish  = ml_prob  > market.yes_price
+            if llm_bullish != ml_bullish:
+                print(f"   ⚠️ 方向対立: LLM={'強気' if llm_bullish else '弱気'}({llm_prob:.0%}) ML={'強気' if ml_bullish else '弱気'}({ml_prob:.0%}) → no_signal")
+                _empty_bayesian = self.aggregator.aggregate(market_price=market.yes_price, signals=[])
+                return EnsembleSignal(
+                    market_id=market.market_id,
+                    token_id=market.yes_token_id,
+                    question=market.question,
+                    llm_prob=llm_prob,
+                    llm_conf=llm_conf,
+                    ml_prob=ml_prob,
+                    ml_conf=ml_conf,
+                    orderflow_signal=0.0,
+                    orderflow_conf=0.0,
+                    bayesian_result=_empty_bayesian,
+                    action=Action.HOLD,
+                    final_probability=market.yes_price,
+                    edge=0.0,
+                    confidence=0.0,
+                    llm_reasoning=llm_reasoning,
+                )
+
         # ========== Orderflow 分析 ==========
         orderflow_signal = 0.0
         orderflow_conf = 0.0
