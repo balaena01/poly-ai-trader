@@ -60,6 +60,9 @@ class DashboardServer:
         self.state = {
             "status": "idle",
             "balance": 0,
+            "portfolio": 0,
+            "unrealized_pnl": 0,
+            "exposure": 0,
             "pnl": 0,
             "trades_today": 0,
             "active_triggers": [],
@@ -68,9 +71,9 @@ class DashboardServer:
             "open_positions": [],
             "markets": [],
             "prices": {"BTC": 0, "ETH": 0},
-            "price_history": [],  # For charts
-            "edge_history": [],   # Edge over time
-            "balance_history": [],  # Balance over time
+            "price_history": [],
+            "edge_history": [],
+            "balance_history": [],
         }
         
         self._setup_routes()
@@ -381,6 +384,12 @@ class DashboardServer:
         .stat-tile-value.up   { color: var(--emerald); }
         .stat-tile-value.down { color: var(--red); }
         .stat-tile-value.amber { color: var(--amber); }
+        .stat-tile-sub {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--text-dim);
+            margin-top: 5px;
+        }
 
         /* ── Grid ────────────────────────────────── */
         .grid {
@@ -710,24 +719,29 @@ class DashboardServer:
     <!-- Stats Bar -->
     <div class="stats-bar">
         <div class="stat-tile">
+            <div class="stat-tile-label">Portfolio</div>
+            <div class="stat-tile-value" id="portfolio">$0.00</div>
+            <div class="stat-tile-sub" id="portfolio-sub">balance + positions</div>
+        </div>
+        <div class="stat-tile">
             <div class="stat-tile-label">Balance</div>
             <div class="stat-tile-value" id="balance">$0.00</div>
+            <div class="stat-tile-sub" id="exposure-sub">exposure $0.00</div>
         </div>
         <div class="stat-tile">
-            <div class="stat-tile-label">PnL</div>
-            <div class="stat-tile-value" id="pnl">+$0.00</div>
-        </div>
-        <div class="stat-tile">
-            <div class="stat-tile-label">Trades</div>
-            <div class="stat-tile-value" id="trades-count">0</div>
-        </div>
-        <div class="stat-tile">
-            <div class="stat-tile-label">Triggers</div>
-            <div class="stat-tile-value amber" id="triggers-count">0</div>
+            <div class="stat-tile-label">Unrealized PnL</div>
+            <div class="stat-tile-value" id="unrealized-pnl">+$0.00</div>
+            <div class="stat-tile-sub" id="pnl-sub">realized $0.00</div>
         </div>
         <div class="stat-tile">
             <div class="stat-tile-label">Positions</div>
             <div class="stat-tile-value" id="positions-count">0</div>
+            <div class="stat-tile-sub" id="trades-sub">0 trades</div>
+        </div>
+        <div class="stat-tile">
+            <div class="stat-tile-label">Triggers</div>
+            <div class="stat-tile-value amber" id="triggers-count">0</div>
+            <div class="stat-tile-sub" id="status-sub">—</div>
         </div>
     </div>
 
@@ -883,50 +897,80 @@ class DashboardServer:
     }
 
     function initAll(s) {
-        setBalance(s.balance);
-        setPnl(s.pnl);
-        document.getElementById('trades-count').textContent = s.trades_today;
+        setBalance(s.balance, s.exposure || 0);
+        setPortfolio(s.portfolio || 0);
+        setUnrealizedPnl(s.unrealized_pnl || 0, s.pnl || 0);
         document.getElementById('triggers-count').textContent = s.active_triggers.length;
+        document.getElementById('trades-sub').textContent = (s.trades_today || 0) + ' trades';
         if (s.prices.BTC) updatePrice('BTC', s.prices.BTC);
         if (s.prices.ETH) updatePrice('ETH', s.prices.ETH);
         const b = document.getElementById('status-badge');
         b.textContent = s.status.toUpperCase();
         b.className = 'sys-status ' + s.status;
+        document.getElementById('status-sub').textContent = s.status;
         renderSignals(s.recent_signals || []);
         renderTriggers(s.active_triggers || []);
         renderPositions(s.open_positions || []);
         renderTrades(s.recent_trades || []);
         (s.edge_history || []).forEach(e => addEdgePoint(e.edge));
         (s.balance_history || []).forEach(b => addBalancePoint(b.balance, b.pnl));
-        if (s.balance > 0) addBalancePoint(s.balance, s.pnl);
+        if (s.balance > 0) addBalancePoint(s.balance, s.unrealized_pnl || 0);
     }
 
     function onUpdate(key, val) {
-        if (key === 'balance') { setBalance(val); addBalancePoint(val, currentPnlNum()); }
-        else if (key === 'pnl') { setPnl(val); addBalancePoint(currentBalNum(), val); }
-        else if (key === 'trades_today') document.getElementById('trades-count').textContent = val;
-        else if (key === 'status') {
+        if (key === 'balance') {
+            const exp = parseFloat(document.getElementById('exposure-sub').textContent.replace(/[^\\d.]/g,'')) || 0;
+            setBalance(val, exp);
+            addBalancePoint(val, currentUnrealizedNum());
+        } else if (key === 'portfolio') {
+            setPortfolio(val);
+        } else if (key === 'unrealized_pnl') {
+            const realized = parseFloat(document.getElementById('pnl-sub').dataset.raw || '0');
+            setUnrealizedPnl(val, realized);
+            addBalancePoint(currentBalNum(), val);
+        } else if (key === 'pnl') {
+            const unreal = currentUnrealizedNum();
+            setUnrealizedPnl(unreal, val);
+        } else if (key === 'exposure') {
+            const bal = currentBalNum();
+            setBalance(bal, val);
+        } else if (key === 'trades_today') {
+            document.getElementById('trades-sub').textContent = val + ' trades';
+        } else if (key === 'status') {
             const b = document.getElementById('status-badge');
             b.textContent = val.toUpperCase(); b.className = 'sys-status ' + val;
+            document.getElementById('status-sub').textContent = val;
         }
     }
 
-    function currentPnlNum() {
-        return parseFloat(document.getElementById('pnl').dataset.raw || '0');
+    function currentUnrealizedNum() {
+        return parseFloat(document.getElementById('unrealized-pnl').dataset.raw || '0');
     }
     function currentBalNum() {
         return parseFloat(document.getElementById('balance').textContent.replace(/[^\\d.]/g,'')) || 0;
     }
 
-    function setBalance(v) {
+    function setBalance(v, exposure) {
         document.getElementById('balance').textContent = '$' + v.toFixed(2);
+        if (exposure !== undefined) {
+            document.getElementById('exposure-sub').textContent = 'exposure $' + exposure.toFixed(2);
+        }
     }
-    function setPnl(v) {
-        const el = document.getElementById('pnl');
-        el.dataset.raw = v;
-        el.textContent = (v >= 0 ? '+' : '') + '$' + v.toFixed(2);
-        el.className = 'stat-tile-value ' + (v > 0 ? 'up' : v < 0 ? 'down' : '');
+    function setPortfolio(v) {
+        document.getElementById('portfolio').textContent = '$' + v.toFixed(2);
     }
+    function setUnrealizedPnl(unreal, realized) {
+        const el = document.getElementById('unrealized-pnl');
+        el.dataset.raw = unreal;
+        el.textContent = (unreal >= 0 ? '+' : '') + '$' + unreal.toFixed(2);
+        el.className = 'stat-tile-value ' + (unreal > 0 ? 'up' : unreal < 0 ? 'down' : '');
+        const sub = document.getElementById('pnl-sub');
+        sub.dataset.raw = realized;
+        sub.textContent = 'realized ' + (realized >= 0 ? '+' : '') + '$' + realized.toFixed(2);
+    }
+    function setPnl(v) { /* legacy, kept for compat */ }
+    // compat aliases
+    function currentPnlNum() { return currentUnrealizedNum(); }
     function updatePrice(sym, price) {
         const el = document.getElementById(sym.toLowerCase() + '-price');
         if (el) el.textContent = '$' + price.toLocaleString();
