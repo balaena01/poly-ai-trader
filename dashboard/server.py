@@ -37,11 +37,14 @@ class ConnectionManager:
     
     async def broadcast(self, message: dict):
         """全クライアントにブロードキャスト"""
+        dead = []
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except:
-                pass
+            except Exception:
+                dead.append(connection)
+        for conn in dead:
+            self.disconnect(conn)
 
 
 class DashboardServer:
@@ -878,6 +881,7 @@ class DashboardServer:
         };
         ws.onclose = () => {
             document.getElementById('conn-dot').classList.remove('live');
+            clearInterval(reconnectInterval);
             reconnectInterval = setInterval(connect, 3000);
         };
         ws.onmessage = e => handleMessage(JSON.parse(e.data));
