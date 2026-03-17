@@ -88,19 +88,16 @@ class LLMAnalyst:
     def __init__(
         self,
         model: str = DEFAULT_MODEL,
-        permission_allow: str = "Bash(true:*)",
         use_continue: bool = False,
         timeout: int = 60,
     ):
         """
         Args:
             model: モデル名 (MODELS のキーまたは完全な API model name)
-            permission_allow: --permission-allow に渡す値
             use_continue: --continue フラグを使うか (直前の会話を継続)
             timeout: サブプロセスのタイムアウト秒数
         """
         self.model = MODELS.get(model, model)
-        self.permission_allow = permission_allow
         self.use_continue = use_continue
         self.timeout = timeout
         print(f"🤖 LLM (Claude CLI): {self.model}")
@@ -138,22 +135,22 @@ class LLMAnalyst:
         """Claude Code CLI をサブプロセスで呼び出す"""
         cmd = [
             "claude",
-            "--print",
+            "-p", prompt,
             "--model", self.model,
-            "--permission-allow", self.permission_allow,
+            "--output-format", "json",
+            "--dangerously-skip-permissions",
         ]
         if self.use_continue:
             cmd.append("--continue")
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         try:
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=prompt.encode("utf-8")),
+                proc.communicate(),
                 timeout=self.timeout,
             )
         except asyncio.TimeoutError:
@@ -164,7 +161,13 @@ class LLMAnalyst:
             err = stderr.decode("utf-8", errors="replace").strip()
             raise RuntimeError(f"Claude CLI エラー (code={proc.returncode}): {err}")
 
-        return stdout.decode("utf-8", errors="replace")
+        # --output-format json → {"result": "...", ...} の result フィールドを取り出す
+        raw = stdout.decode("utf-8", errors="replace")
+        try:
+            wrapper = json.loads(raw)
+            return wrapper.get("result", raw)
+        except Exception:
+            return raw
 
     async def analyze_market(
         self,
