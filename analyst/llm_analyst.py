@@ -75,16 +75,19 @@ class Signal:
 #   ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY
 
 MODELS = {
-    # ========== Anthropic (公開API対応モデル) ==========
-    # ※ claude-opus-4-6 / claude-sonnet-4-6 は Claude Code 内部 ID のため使用不可
-    "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",  # 最速・低コスト
-    "claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
-    "claude-opus-4.5": "claude-opus-4-5-20251101",
-    "claude-sonnet-4": "claude-sonnet-4-20250514",
-    "claude-opus-4": "claude-opus-4-20250514",
+    # ========== Anthropic (最新) ==========
+    # anthropic/ プレフィックスで litellm が確実にルーティング
+    "claude-opus-4.6":  "anthropic/claude-opus-4-6",    # 最高性能
+    "claude-sonnet-4.6": "anthropic/claude-sonnet-4-6", # バランス
+    "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4-5-20251001",  # 最速・低コスト
+
+    "claude-sonnet-4.5": "anthropic/claude-sonnet-4-5-20250929",
+    "claude-opus-4.5":   "anthropic/claude-opus-4-5-20251101",
+    "claude-sonnet-4":   "anthropic/claude-sonnet-4-20250514",
+    "claude-opus-4":     "anthropic/claude-opus-4-20250514",
 
     # 旧世代
-    "claude-3-haiku": "claude-3-haiku-20240307",    # 安い
+    "claude-3-haiku": "anthropic/claude-3-haiku-20240307",  # 安い
     
     # ========== OpenAI ==========
     "gpt-4o": "gpt-4o",
