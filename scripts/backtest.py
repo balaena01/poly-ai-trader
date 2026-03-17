@@ -470,10 +470,14 @@ class Backtester:
                     current_price=yes_price,
                 )
                 if llm_result:
+                    prob = llm_result.get("probability", 0.5)
+                    conf = llm_result.get("confidence", 0.5)
+                    reasoning = llm_result.get("reasoning", "")
+                    print(f'         LLM: prob={prob:.0%} conf={conf:.0%} "{reasoning[:60]}"')
                     signals.append(SignalSource(
                         name="LLM",
-                        probability=llm_result.get("probability", 0.5),
-                        confidence=llm_result.get("confidence", 0.5),
+                        probability=prob,
+                        confidence=conf,
                         accuracy=0.65,
                     ))
             except Exception:
