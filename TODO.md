@@ -8,6 +8,9 @@
 
 | コミット | 内容 |
 |---|---|
+| `dcce1ee` | feat: backtest --use-llm 時にニュース取得を追加 (orchestrator と同じ動作) |
+| `f7147ca` | feat: backtest LLMシグナルのログ表示追加 (prob/conf/reasoning) |
+| `07cfb25` | fix: Claude CLI コマンド修正 (-p引数渡し/--dangerously-skip-permissions/--output-format json) |
 | `9bfc5eb` | refactor: LLM呼び出しをlitellm→Claude Code CLIサブプロセスに移行 (ANTHROPIC_API_KEY不要化) |
 | `b7c33e1` | fix: ダッシュボードメモリリーク2件修正 (JS setInterval重複 + Python ゾンビWS接続) |
 | `e4f376e` | fix: ポートフォリオ集計からPENDINGポジションを除外 (未約定GTC注文の phantom PnL修正) |
