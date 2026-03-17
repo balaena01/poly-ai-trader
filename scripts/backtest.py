@@ -56,7 +56,7 @@ class BacktestConfig:
     min_volume: float = 1_000           # 最小出来高 ($) ※closed後はliquidityが0になるためvolumeのみでフィルター
     min_liquidity: float = 10_000       # 最小流動性 ($)
     use_llm: bool = False               # LLM 分析を使うか
-    llm_model: str = "claude-3.5-haiku"
+    llm_model: str = "claude-haiku-4-5-20251001"
     min_edge: float = 0.05              # シグナルフィルター: 最小エッジ
     min_confidence: float = 0.50        # シグナルフィルター: 最小信頼度
     initial_balance: float = 1000.0     # バックテスト開始時の残高 (USDC)
@@ -670,7 +670,7 @@ def main():
     parser.add_argument("--min-edge",         type=float, default=0.05,  help="最小エッジ")
     parser.add_argument("--min-confidence",   type=float, default=0.50,  help="最小信頼度")
     parser.add_argument("--use-llm",          action="store_true",       help="LLM 分析を有効化 (API費用発生)")
-    parser.add_argument("--llm-model",        default="claude-3.5-haiku", help="LLM モデル名")
+    parser.add_argument("--llm-model",        default="claude-haiku-4-5-20251001", help="LLM モデル名")
     parser.add_argument("--balance",          type=float, default=1000.0, help="初期残高 (USDC)")
     parser.add_argument("--analysis-point",   type=float, default=0.60,
                         help="マーケット期間の何%%時点で分析するか (0.0〜1.0, デフォルト: 0.60)")
