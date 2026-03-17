@@ -450,6 +450,7 @@ class Backtester:
         signals: List[SignalSource] = []
 
         # ML シグナル
+        ml_prob, ml_conf = 0.5, 0.0
         if self.ml_analyst:
             features = self.feature_extractor.extract(
                 prices=prices,
@@ -459,11 +460,14 @@ class Backtester:
                 end_date=market.end_date,
             )
             ml_pred = self.ml_analyst.predict(features)
+            ml_prob = ml_pred.probability
+            ml_conf = ml_pred.confidence
+            ml_accuracy = 0.5 + 0.22 * ml_conf  # conf低→accuracy低
             signals.append(SignalSource(
                 name="LightGBM",
-                probability=ml_pred.probability,
-                confidence=ml_pred.confidence,
-                accuracy=0.72,  # Valid AUC に合わせて設定
+                probability=ml_prob,
+                confidence=ml_conf,
+                accuracy=ml_accuracy,
             ))
 
         # LLM シグナル (オプション)
@@ -488,14 +492,23 @@ class Backtester:
                     context={"news": news_context} if news_context else None,
                 )
                 if llm_result:
-                    prob = llm_result.get("probability", 0.5)
-                    conf = llm_result.get("confidence", 0.5)
+                    llm_prob = llm_result.get("probability", 0.5)
+                    llm_conf = llm_result.get("confidence", 0.5)
                     reasoning = llm_result.get("reasoning", "")
-                    print(f'         LLM: prob={prob:.0%} conf={conf:.0%} "{reasoning[:60]}"')
+                    print(f'         LLM: prob={llm_prob:.0%} conf={llm_conf:.0%} "{reasoning[:60]}"')
+
+                    # 方向対立チェック (ML が揃っている場合のみ)
+                    if self.ml_analyst and ml_conf > 0:
+                        llm_bullish = llm_prob > yes_price
+                        ml_bullish  = ml_prob  > yes_price
+                        if llm_bullish != ml_bullish:
+                            print(f"         ⚠️ 方向対立: LLM={'強気' if llm_bullish else '弱気'} ML={'強気' if ml_bullish else '弱気'} → no_signal")
+                            return None
+
                     signals.append(SignalSource(
                         name="LLM",
-                        probability=prob,
-                        confidence=conf,
+                        probability=llm_prob,
+                        confidence=llm_conf,
                         accuracy=0.65,
                     ))
             except Exception:
