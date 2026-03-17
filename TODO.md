@@ -8,6 +8,7 @@
 
 | コミット | 内容 |
 |---|---|
+| `e46993a` | feat: LLM判断ログ表示 + トリガー時キャッシュ + 再分析時に前回判断をコンテキスト追加 |
 | `dcce1ee` | feat: backtest --use-llm 時にニュース取得を追加 (orchestrator と同じ動作) |
 | `f7147ca` | feat: backtest LLMシグナルのログ表示追加 (prob/conf/reasoning) |
 | `07cfb25` | fix: Claude CLI コマンド修正 (-p引数渡し/--dangerously-skip-permissions/--output-format json) |
