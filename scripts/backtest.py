@@ -125,8 +125,12 @@ class Backtester:
         self.llm_analyst = None
         if config.use_llm:
             from analyst.llm_analyst import LLMAnalyst
+            from data_fetcher import GoogleNewsFetcher
             self.llm_analyst = LLMAnalyst(model=config.llm_model)
+            self.news_fetcher = GoogleNewsFetcher()
             print(f"   🤖 LLM: {config.llm_model}")
+        else:
+            self.news_fetcher = None
 
     # --------- メインフロー ---------
 
@@ -465,9 +469,23 @@ class Backtester:
         # LLM シグナル (オプション)
         if self.llm_analyst:
             try:
+                # ニュース取得 (orchestrator と同じ流れ)
+                news_context = ""
+                if self.news_fetcher:
+                    articles = await self.news_fetcher.search(market.question, limit=5)
+                    if articles:
+                        lines = []
+                        for a in articles:
+                            line = f"- {a.title}"
+                            if a.summary:
+                                line += f"\n  {a.summary[:300]}"
+                            lines.append(line)
+                        news_context = "\n".join(lines)
+
                 llm_result = await self.llm_analyst.analyze_market(
                     question=market.question,
                     current_price=yes_price,
+                    context={"news": news_context} if news_context else None,
                 )
                 if llm_result:
                     prob = llm_result.get("probability", 0.5)
