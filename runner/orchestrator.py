@@ -781,7 +781,7 @@ class Orchestrator:
     async def _set_trigger(self, market, signal, size: float):
         """トリガー条件を設定"""
         # BUY_YES/SELL_YES は YES token、BUY_NO/SELL_NO は NO token
-        if signal.action.value in ("BUY_YES", "SELL_YES"):
+        if signal.action.value.upper() in ("BUY_YES", "SELL_YES"):
             token_id = getattr(market, 'yes_token_id', None)
         else:
             token_id = getattr(market, 'no_token_id', None) or getattr(market, 'yes_token_id', None)
