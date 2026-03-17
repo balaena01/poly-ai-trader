@@ -1448,9 +1448,17 @@ class Orchestrator:
                                 # YES token で取得済み → そのまま YES 価格
                                 current_prices[pos.market_id] = mid_price
                             else:
-                                # 旧レコード: side で判定 (NO token なら反転)
+                                # 旧レコード: side で判定 + ヒューリスティック
+                                # BUY_YES なのに midpoint が entry_price より (1-entry_price) に
+                                # 近い場合はバグで NO token が格納されているので反転する
                                 side_upper = pos.side.upper()
                                 if "NO" in side_upper:
+                                    current_prices[pos.market_id] = 1.0 - mid_price
+                                elif (
+                                    abs(mid_price - (1.0 - pos.entry_price))
+                                    < abs(mid_price - pos.entry_price)
+                                ):
+                                    # NO token が誤格納されている → 反転して YES 価格に
                                     current_prices[pos.market_id] = 1.0 - mid_price
                                 else:
                                     current_prices[pos.market_id] = mid_price
