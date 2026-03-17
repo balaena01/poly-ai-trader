@@ -131,6 +131,7 @@ class EnsembleAnalyst:
         eth_price: float = None,
         eth_change: float = None,
         news_context: str = None,
+        previous_judgment: dict = None,
     ) -> EnsembleSignal:
         """
         マーケットを分析
@@ -164,16 +165,24 @@ class EnsembleAnalyst:
             context["eth_change"] = eth_change
         if news_context:
             context["news"] = news_context
-        
+        if previous_judgment:
+            context["previous_judgment"] = (
+                f'[前回判断] prob={previous_judgment.get("probability", 0.5):.0%} '
+                f'conf={previous_judgment.get("confidence", 0.5):.0%} '
+                f'"{previous_judgment.get("reasoning", "")}"'
+            )
+
         llm_result = await self.llm_analyst.analyze_market(
             question=market.question,
             current_price=market.yes_price,
             context=context if context else None,
         )
-        
+
         llm_prob = llm_result.get("probability", 0.5) if llm_result else 0.5
         llm_conf = llm_result.get("confidence", 0.5) if llm_result else 0.5
         llm_reasoning = llm_result.get("reasoning", "") if llm_result else ""
+
+        print(f'   LLM: prob={llm_prob:.0%} conf={llm_conf:.0%} "{llm_reasoning[:80]}"')
         
         signals.append(SignalSource(
             name="LLM",

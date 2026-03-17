@@ -681,6 +681,9 @@ class Orchestrator:
                         total_liquidity=market_liquidity,
                     )
 
+            # 前回LLM判断を読み込み (トリガー設定済みマーケットの再分析時に使用)
+            previous_judgment = self._load_llm_judgment(token_id) if token_id else None
+
             # 分析
             signal = await self.analyst.analyze(
                 market=market,
@@ -688,6 +691,7 @@ class Orchestrator:
                 trades=trades,
                 btc_price=self._btc_price,
                 news_context=news_context,
+                previous_judgment=previous_judgment,
             )
             
             if not signal:
@@ -838,6 +842,9 @@ class Orchestrator:
         
         # YES token で監視 (WebSocket は YES 価格を送ってくる)
         self.active_triggers[watch_token_id] = trigger
+
+        # LLM判断をキャッシュ (次サイクルのエッジ再検証時に使用)
+        self._save_llm_judgment(token_id, signal)
 
         # ペンディングエクスポージャーに追加
         self.risk_manager.add_pending_exposure(size)
@@ -1380,6 +1387,35 @@ class Orchestrator:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception:
             pass  # ログ失敗でもトレードは続行
+
+    # ========== LLM判断キャッシュ ==========
+
+    _JUDGMENT_DIR = Path("data/llm_judgments")
+
+    def _save_llm_judgment(self, token_id: str, signal) -> None:
+        """トリガーセット時にLLM判断をキャッシュ (1トークン1ファイル・上書き)"""
+        try:
+            self._JUDGMENT_DIR.mkdir(parents=True, exist_ok=True)
+            path = self._JUDGMENT_DIR / f"{token_id}.json"
+            data = {
+                "probability": round(signal.final_probability, 4),
+                "confidence": round(signal.confidence, 4),
+                "reasoning": signal.llm_reasoning,
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            }
+            path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _load_llm_judgment(self, token_id: str) -> Optional[dict]:
+        """前回のLLM判断を読み込む。なければ None"""
+        try:
+            path = self._JUDGMENT_DIR / f"{token_id}.json"
+            if path.exists():
+                return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        return None
 
     # ========== ポジションダッシュボード送信 ==========
 

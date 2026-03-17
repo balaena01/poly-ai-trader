@@ -193,6 +193,8 @@ class LLMAnalyst:
                 ctx_text += f" (24h: {context['eth_change']:+.1f}%)"
             if "news" in context:
                 ctx_text += f"\n\n関連ニュース:\n{context['news']}"
+            if "previous_judgment" in context:
+                ctx_text += f"\n\n{context['previous_judgment']}"
 
         full_prompt = f"""{self.SYSTEM_PROMPT}
 ## 予測対象
