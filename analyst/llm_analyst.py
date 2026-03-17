@@ -79,16 +79,18 @@ MODELS = {
     # 最新世代 (2026年3月時点)
     "claude-opus-4.6": "claude-opus-4-6",           # 最高性能、エージェント/コーディング
     "claude-sonnet-4.6": "claude-sonnet-4-6",       # 速度と性能のバランス
-    "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",         # 最速、低コスト ($1/MTok in)
-    
+    "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",         # Haiku 4.5 (新命名)
+    "claude-haiku-4.5": "claude-haiku-4-5-20251001",                  # エイリアス
+
     # レガシー (まだ利用可能)
     "claude-sonnet-4.5": "claude-sonnet-4-5-20250929",
     "claude-opus-4.5": "claude-opus-4-5-20251101",
     "claude-sonnet-4": "claude-sonnet-4-20250514",
     "claude-opus-4": "claude-opus-4-20250514",
-    
-    # 旧世代 (非推奨)
-    "claude-3-haiku": "claude-3-haiku-20240307",    # 非推奨、安い
+
+    # Claude 3.x (安定・実績あり)
+    "claude-3.5-haiku": "claude-3-5-haiku-20241022", # 安価・高速・litellm確実対応
+    "claude-3-haiku": "claude-3-haiku-20240307",    # 旧世代、安い
     
     # ========== OpenAI ==========
     "gpt-4o": "gpt-4o",
@@ -108,8 +110,8 @@ MODELS = {
     "groq/mixtral": "groq/mixtral-8x7b-32768",
 }
 
-# デフォルトモデル
-DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+# デフォルトモデル (litellm で確実に動作する claude-3-5-haiku)
+DEFAULT_MODEL = "claude-3.5-haiku"
 
 
 class LLMAnalyst:
