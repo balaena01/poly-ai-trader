@@ -1,10 +1,9 @@
 """
 LLM Analyst
-- マーケット情報 + 外部価格を分析
-- LiteLLM で複数プロバイダー対応 (Anthropic, OpenAI, etc.)
+- Claude Code CLI をサブプロセスで呼び出して市場分析
+- litellm 不要・API キー設定不要 (Claude Code の認証を使用)
 - 売買シグナル生成
 """
-import os
 import json
 import re
 import asyncio
@@ -12,19 +11,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
 from enum import Enum
-
-from dotenv import load_dotenv
-
-load_dotenv()
-
-# LiteLLM
-try:
-    import litellm
-    from litellm import acompletion
-    LITELLM_AVAILABLE = True
-except ImportError:
-    LITELLM_AVAILABLE = False
-    print("Warning: litellm not installed. Run: pip install litellm")
 
 
 class Action(Enum):
@@ -42,22 +28,21 @@ class Signal:
     market_id: str
     token_id: str
     question: str
-    market_price: float  # 現在のマーケット価格
-    predicted_prob: float  # LLM予測確率
-    confidence: float  # 信頼度 (0-1)
-    edge: float  # エッジ (predicted - market)
+    market_price: float
+    predicted_prob: float
+    confidence: float
+    edge: float
     reasoning: str
     timestamp: datetime = None
-    
+
     def __post_init__(self):
         if self.timestamp is None:
             self.timestamp = datetime.now()
-    
+
     @property
     def is_tradeable(self) -> bool:
-        """取引可能か (エッジ > 閾値)"""
         return abs(self.edge) > 0.10 and self.confidence > 0.6
-    
+
     def to_dict(self) -> dict:
         return {
             "action": self.action.value,
@@ -70,49 +55,23 @@ class Signal:
         }
 
 
-# ========== 利用可能なモデル ==========
-# LiteLLM は環境変数から自動で API キーを読み込む:
-#   ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY
-
+# Claude Code CLI で使えるモデル名 (anthropic/ プレフィックス不要)
 MODELS = {
-    # ========== Anthropic (最新) ==========
-    # anthropic/ プレフィックスで litellm が確実にルーティング
-    "claude-opus-4.6":  "anthropic/claude-opus-4-6",    # 最高性能
-    "claude-sonnet-4.6": "anthropic/claude-sonnet-4-6", # バランス
-    "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4-5-20251001",  # 最速・低コスト
-
-    "claude-sonnet-4.5": "anthropic/claude-sonnet-4-5-20250929",
-    "claude-opus-4.5":   "anthropic/claude-opus-4-5-20251101",
-    "claude-sonnet-4":   "anthropic/claude-sonnet-4-20250514",
-    "claude-opus-4":     "anthropic/claude-opus-4-20250514",
-
-    # claude-3-haiku-20240307 は Deprecated (2026/4/20 退役予定) のため削除済み
-    
-    # ========== OpenAI ==========
-    "gpt-4o": "gpt-4o",
-    "gpt-4o-mini": "gpt-4o-mini",
-    "gpt-4-turbo": "gpt-4-turbo",
-    "gpt-3.5-turbo": "gpt-3.5-turbo",
-    
-    # ========== OpenRouter 経由 ==========
-    "or/claude-haiku": "openrouter/anthropic/claude-3-haiku",
-    "or/claude-sonnet": "openrouter/anthropic/claude-3.5-sonnet",
-    "or/gpt-4o": "openrouter/openai/gpt-4o",
-    "or/llama-70b": "openrouter/meta-llama/llama-3.1-70b-instruct",
-    
-    # ========== Groq (高速推論) ==========
-    "groq/llama-70b": "groq/llama-3.1-70b-versatile",
-    "groq/llama-8b": "groq/llama-3.1-8b-instant",
-    "groq/mixtral": "groq/mixtral-8x7b-32768",
+    "claude-opus-4.6":          "claude-opus-4-6",
+    "claude-sonnet-4.6":        "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001": "claude-haiku-4-5-20251001",
+    "claude-sonnet-4.5":        "claude-sonnet-4-5-20250929",
+    "claude-opus-4.5":          "claude-opus-4-5-20251101",
+    "claude-sonnet-4":          "claude-sonnet-4-20250514",
+    "claude-opus-4":            "claude-opus-4-20250514",
 }
 
-# デフォルトモデル
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 
 class LLMAnalyst:
-    """LLM を使った市場分析 (LiteLLM 対応)"""
-    
+    """Claude Code CLI を使った市場分析"""
+
     SYSTEM_PROMPT = """あなたは予測市場のアナリストです。
 与えられた情報から、イベントが「YES」で解決する確率を予測してください。
 
@@ -122,67 +81,49 @@ class LLMAnalyst:
 3. 不確実性が高い場合は confidence を下げること
 4. 根拠を簡潔に説明すること
 
-## 出力形式 (JSON)
-{
-    "probability": 0.65,  // YESの確率 (0.0 - 1.0)
-    "confidence": 0.7,    // 予測の信頼度 (0.0 - 1.0)
-    "reasoning": "理由を簡潔に"
-}
+## 出力形式 (JSON のみ。他のテキスト不要)
+{"probability": 0.65, "confidence": 0.7, "reasoning": "理由を簡潔に"}
 """
-    
+
     def __init__(
         self,
         model: str = DEFAULT_MODEL,
-        fallback_model: str = None,
+        permission_allow: str = "Bash(true:*)",
+        use_continue: bool = False,
+        timeout: int = 60,
     ):
         """
-        LLM Analyst 初期化
-        
         Args:
-            model: モデル名 (MODELS のキーまたは完全名)
-            fallback_model: フォールバックモデル
-        
-        環境変数 (LiteLLM が自動読み込み):
-            ANTHROPIC_API_KEY  : Anthropic 直接
-            OPENAI_API_KEY     : OpenAI 直接
-            OPENROUTER_API_KEY : OpenRouter 経由
-            GROQ_API_KEY       : Groq
+            model: モデル名 (MODELS のキーまたは完全な API model name)
+            permission_allow: --permission-allow に渡す値
+            use_continue: --continue フラグを使うか (直前の会話を継続)
+            timeout: サブプロセスのタイムアウト秒数
         """
-        if not LITELLM_AVAILABLE:
-            raise RuntimeError("litellm not installed")
-        
-        # モデル名を解決
         self.model = MODELS.get(model, model)
-        self.fallback_model = MODELS.get(fallback_model, fallback_model) if fallback_model else None
-        
-        # デバッグ出力を抑制
-        litellm.suppress_debug_info = True
-        
-        print(f"🤖 LLM: {self.model}")
-    
+        self.permission_allow = permission_allow
+        self.use_continue = use_continue
+        self.timeout = timeout
+        print(f"🤖 LLM (Claude CLI): {self.model}")
+
     def _parse_llm_json(self, content: str) -> Optional[dict]:
-        """LLMレスポンスからJSONを抽出。コードブロック・正規表現をフォールバックに使用。"""
+        """LLMレスポンスからJSONを抽出"""
         if not content or not content.strip():
             return None
         text = content.strip()
-        # コードブロック除去
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0].strip()
         elif "```" in text:
             text = text.split("```")[1].split("```")[0].strip()
-        # 通常のJSONパース
         try:
             return json.loads(text)
         except Exception:
             pass
-        # { } の範囲を抽出して再試行
         m = re.search(r'\{[^{}]*\}', text, re.DOTALL)
         if m:
             try:
                 return json.loads(m.group())
             except Exception:
                 pass
-        # 正規表現で probability / confidence だけ抽出
         prob = re.search(r'"probability"\s*:\s*([0-9.]+)', text)
         conf = re.search(r'"confidence"\s*:\s*([0-9.]+)', text)
         if prob:
@@ -193,6 +134,38 @@ class LLMAnalyst:
             }
         return None
 
+    async def _call_cli(self, prompt: str) -> str:
+        """Claude Code CLI をサブプロセスで呼び出す"""
+        cmd = [
+            "claude",
+            "--print",
+            "--model", self.model,
+            "--permission-allow", self.permission_allow,
+        ]
+        if self.use_continue:
+            cmd.append("--continue")
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=prompt.encode("utf-8")),
+                timeout=self.timeout,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise RuntimeError(f"Claude CLI タイムアウト ({self.timeout}s)")
+
+        if proc.returncode != 0:
+            err = stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"Claude CLI エラー (code={proc.returncode}): {err}")
+
+        return stdout.decode("utf-8", errors="replace")
+
     async def analyze_market(
         self,
         question: str,
@@ -201,16 +174,10 @@ class LLMAnalyst:
     ) -> Optional[dict]:
         """
         マーケットを分析
-        
-        Args:
-            question: マーケットの質問
-            current_price: 現在のYES価格
-            context: 追加コンテキスト (BTC価格、ニュース等)
-        
+
         Returns:
             {"probability": float, "confidence": float, "reasoning": str}
         """
-        # コンテキスト構築
         ctx_text = ""
         if context:
             if "btc_price" in context:
@@ -223,8 +190,9 @@ class LLMAnalyst:
                 ctx_text += f" (24h: {context['eth_change']:+.1f}%)"
             if "news" in context:
                 ctx_text += f"\n\n関連ニュース:\n{context['news']}"
-        
-        user_prompt = f"""## 予測対象
+
+        full_prompt = f"""{self.SYSTEM_PROMPT}
+## 予測対象
 質問: {question}
 現在のマーケット価格 (YES): {current_price:.1%}
 
@@ -232,48 +200,15 @@ class LLMAnalyst:
 
 ## タスク
 この質問が「YES」で解決する確率を予測してください。
-JSON形式で回答してください。
+JSONのみで回答してください。
 """
-        
         try:
-            response = await acompletion(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": self.SYSTEM_PROMPT},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.3,
-                max_tokens=500,
-            )
-            
-            content = response.choices[0].message.content
-            
-            # JSON抽出
-            return self._parse_llm_json(content)
-            
+            raw = await self._call_cli(full_prompt)
+            return self._parse_llm_json(raw)
         except Exception as e:
             print(f"LLM分析エラー: {e}")
-            
-            # フォールバック
-            if self.fallback_model:
-                try:
-                    print(f"  → フォールバック: {self.fallback_model}")
-                    response = await acompletion(
-                        model=self.fallback_model,
-                        messages=[
-                            {"role": "system", "content": self.SYSTEM_PROMPT},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        temperature=0.3,
-                        max_tokens=500,
-                    )
-                    content = response.choices[0].message.content
-                    return self._parse_llm_json(content)
-                except Exception as e2:
-                    print(f"フォールバックも失敗: {e2}")
-            
             return None
-    
+
     async def generate_signals(
         self,
         markets: list,
@@ -284,12 +219,9 @@ JSON形式で回答してください。
         min_edge: float = 0.10,
         max_markets: int = 5,
     ) -> List[Signal]:
-        """
-        複数マーケットからシグナルを生成
-        """
+        """複数マーケットからシグナルを生成"""
         signals = []
-        
-        # コンテキスト構築
+
         context = {}
         if btc_price:
             context["btc_price"] = btc_price
@@ -299,27 +231,24 @@ JSON形式で回答してください。
             context["eth_price"] = eth_price
         if eth_change:
             context["eth_change"] = eth_change
-        
+
         for market in markets[:max_markets]:
             print(f"  📊 分析中: {market.question[:40]}...")
-            
+
             result = await self.analyze_market(
                 question=market.question,
                 current_price=market.yes_price,
                 context=context,
             )
-            
+
             if not result:
                 continue
-            
+
             prob = result.get("probability", 0.5)
             conf = result.get("confidence", 0.5)
             reason = result.get("reasoning", "")
-            
-            # エッジ計算
             edge = prob - market.yes_price
-            
-            # アクション決定
+
             if edge > min_edge:
                 action = Action.BUY_YES
                 token_id = market.yes_token_id
@@ -329,8 +258,8 @@ JSON形式で回答してください。
             else:
                 action = Action.HOLD
                 token_id = market.yes_token_id
-            
-            signal = Signal(
+
+            signals.append(Signal(
                 action=action,
                 market_id=market.market_id,
                 token_id=token_id,
@@ -340,72 +269,34 @@ JSON形式で回答してください。
                 confidence=conf,
                 edge=edge,
                 reasoning=reason,
-            )
-            
-            signals.append(signal)
-            
-            # レート制限対策
-            await asyncio.sleep(0.5)
-        
-        # エッジの絶対値でソート
+            ))
+
         signals.sort(key=lambda x: abs(x.edge), reverse=True)
-        
         return signals
 
 
 def list_models():
     """利用可能なモデル一覧"""
-    print("\n🤖 利用可能なモデル:\n")
-    
-    print("━━━ Anthropic (最新) ━━━")
-    for key in ["claude-opus-4.6", "claude-sonnet-4.6", "claude-haiku-4-5-20251001"]:
-        print(f"  {key:20} → {MODELS[key]}")
-    
-    print("\n━━━ Anthropic (レガシー) ━━━")
-    for key in ["claude-sonnet-4.5", "claude-opus-4.5", "claude-sonnet-4", "claude-opus-4", "claude-3-haiku"]:
-        print(f"  {key:20} → {MODELS[key]}")
-    
-    print("\n━━━ OpenAI ━━━")
-    for key in ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]:
-        print(f"  {key:20} → {MODELS[key]}")
-    
-    print("\n━━━ OpenRouter 経由 ━━━")
-    for key in ["or/claude-haiku", "or/claude-sonnet", "or/gpt-4o", "or/llama-70b"]:
-        print(f"  {key:20} → {MODELS[key]}")
-    
-    print("\n━━━ Groq (高速) ━━━")
-    for key in ["groq/llama-70b", "groq/llama-8b", "groq/mixtral"]:
-        print(f"  {key:20} → {MODELS[key]}")
-    
-    print("\n━━━ 環境変数 (LiteLLM 自動読み込み) ━━━")
-    print("  ANTHROPIC_API_KEY   : Anthropic 直接")
-    print("  OPENAI_API_KEY      : OpenAI 直接")
-    print("  OPENROUTER_API_KEY  : OpenRouter 経由")
-    print("  GROQ_API_KEY        : Groq")
-    
+    print("\n🤖 Claude Code CLI モデル一覧:\n")
+    for key, val in MODELS.items():
+        print(f"  {key:30} → {val}")
     print(f"\n📌 デフォルト: {DEFAULT_MODEL}")
 
 
 # テスト用
 async def _test():
     from scanner import MarketScanner
-    
-    # スキャン
+
     scanner = MarketScanner()
     result = await scanner.scan()
-    
-    # 分析
+
     analyst = LLMAnalyst(model=DEFAULT_MODEL)
-    
     signals = await analyst.generate_signals(
         markets=result.markets[:2],
-        btc_price=result.btc_price.price if result.btc_price else None,
-        btc_change=result.btc_price.change_24h if result.btc_price else None,
+        min_edge=0.05,
     )
-    
-    print(f"\n🎯 シグナル ({len(signals)}件):")
     for s in signals:
-        print(json.dumps(s.to_dict(), indent=2, ensure_ascii=False))
+        print(s.to_dict())
 
 
 if __name__ == "__main__":
