@@ -86,8 +86,7 @@ MODELS = {
     "claude-sonnet-4":   "anthropic/claude-sonnet-4-20250514",
     "claude-opus-4":     "anthropic/claude-opus-4-20250514",
 
-    # 旧世代
-    "claude-3-haiku": "anthropic/claude-3-haiku-20240307",  # 安い
+    # claude-3-haiku-20240307 は Deprecated (2026/4/20 退役予定) のため削除済み
     
     # ========== OpenAI ==========
     "gpt-4o": "gpt-4o",
