@@ -212,7 +212,8 @@ class EnsembleAnalyst:
             ml_result = self.ml_analyst.predict(features)
             ml_prob = ml_result.probability
             ml_conf = ml_result.confidence
-            
+            print(f"    ML: prob={ml_prob:.0%} conf={ml_conf:.0%}")
+
             signals.append(SignalSource(
                 name="LightGBM",
                 probability=ml_prob,
