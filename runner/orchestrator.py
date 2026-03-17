@@ -1344,7 +1344,7 @@ class Orchestrator:
     async def _push_positions_to_dashboard(self, markets: List):
         """オープンポジションの含み損益を計算してダッシュボードへ送信"""
         try:
-            # market_id → 現在の YES 価格 マップ
+            # market_id → 現在の YES 価格 マップ (スキャン結果から)
             current_prices: Dict[str, float] = {}
             for m in markets:
                 mid = getattr(m, "condition_id", None)
@@ -1352,8 +1352,28 @@ class Orchestrator:
                 if mid and price:
                     current_prices[mid] = price
 
+            # スキャンに含まれないポジションはCLOBから直接取得
+            open_positions = self.position_tracker.get_open_positions()
+            missing = [p for p in open_positions if p.market_id not in current_prices]
+            if missing:
+                try:
+                    from client import PolyClient
+                    _pc = PolyClient()
+                    _pc.connect(read_only=True)
+                    for pos in missing:
+                        mid_price = _pc.get_midpoint(pos.token_id)
+                        if mid_price is not None:
+                            side_upper = pos.side.upper()
+                            if "NO" in side_upper:
+                                # NO token の midpoint → YES 価格に変換
+                                current_prices[pos.market_id] = 1.0 - mid_price
+                            else:
+                                current_prices[pos.market_id] = mid_price
+                except Exception:
+                    pass  # 取得失敗時はフォールバック
+
             positions_data = []
-            for pos in self.position_tracker.get_open_positions():
+            for pos in open_positions:
                 yes_price = current_prices.get(pos.market_id, pos.entry_price)
                 unrealized = pos.calculate_unrealized_pnl(yes_price)
                 unrealized_pct = pos.get_unrealized_pnl_pct(yes_price)
