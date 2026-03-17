@@ -1367,6 +1367,8 @@ class Orchestrator:
                     "unrealized_pnl": round(unrealized, 4),
                     "unrealized_pnl_pct": round(unrealized_pct, 4),
                     "created_at": pos.created_at.isoformat() if pos.created_at else None,
+                    "order_filled": pos.order_filled,
+                    "order_id": pos.order_id,
                 })
 
             await self.dashboard.push_positions(positions_data)
