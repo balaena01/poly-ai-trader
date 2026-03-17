@@ -36,6 +36,15 @@ class RunMode(Enum):
     LIVE = "live"
 
 
+def _order_status(order) -> Optional[str]:
+    """py-clob-client の注文オブジェクト(dict or object)からステータス文字列を取得"""
+    if order is None:
+        return None
+    if isinstance(order, dict):
+        return order.get("status")
+    return getattr(order, "status", None)
+
+
 @dataclass
 class TriggerCondition:
     """売買トリガー条件"""
@@ -874,25 +883,54 @@ class Orchestrator:
         now = datetime.now(timezone.utc)
         gtc_cancel_minutes = 60
 
+        # アクティブな注文IDセット (オープン注文一覧から取得)
+        # CLOBは約定済み注文をリストから除外するため、不在 = 約定 or キャンセル
+        try:
+            active_orders = client.get_orders() or []
+            active_ids: Optional[set] = set()
+            for o in active_orders:
+                oid = o.get("id") if isinstance(o, dict) else getattr(o, "id", None)
+                if oid:
+                    active_ids.add(oid)
+        except Exception:
+            active_ids = None  # 取得失敗時は個別確認にフォールバック
+
         for pos in pending:
             if not pos.order_id:
-                # order_idなし → フィルド済みとして扱う
                 self.position_tracker.mark_order_filled(pos.id)
                 continue
 
-            order = client.get_order(pos.order_id)
-            if order is None:
+            # アクティブ注文リストにない → 約定かキャンセル
+            if active_ids is not None and pos.order_id not in active_ids:
+                # 個別取得で区別を試みる
+                order = client.get_order(pos.order_id)
+                status = _order_status(order)
+                if status in ("MATCHED", "FILLED") or status is None:
+                    self.position_tracker.mark_order_filled(pos.id)
+                    print(f"   ✅ GTC約定確認 (active_ids): {pos.question[:40]}")
+                elif status == "CANCELLED":
+                    self.position_tracker.remove_position(pos.id)
+                    if pos.market_id in self.risk_manager.open_positions:
+                        del self.risk_manager.open_positions[pos.market_id]
+                    self.executed_markets.discard(pos.market_id)
+                    print(f"   🗑️ GTC外部キャンセル検出: {pos.question[:40]}")
                 continue
 
-            order_status = order.get("status", "LIVE")
+            # 個別にステータスを確認 (active_ids が取れなかった場合 or まだLIVE)
+            order = client.get_order(pos.order_id)
+            if order is None:
+                # 見つからない → 約定済みと判断
+                self.position_tracker.mark_order_filled(pos.id)
+                print(f"   ✅ GTC約定確認 (order not found): {pos.question[:40]}")
+                continue
 
-            if order_status == "MATCHED":
-                # 約定済み
+            order_status = _order_status(order)
+
+            if order_status in ("MATCHED", "FILLED"):
                 self.position_tracker.mark_order_filled(pos.id)
                 print(f"   ✅ GTC約定確認: {pos.question[:40]}")
 
             elif order_status == "CANCELLED":
-                # 外部からキャンセル済み → ポジション削除
                 self.position_tracker.remove_position(pos.id)
                 if pos.market_id in self.risk_manager.open_positions:
                     del self.risk_manager.open_positions[pos.market_id]
