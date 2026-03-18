@@ -8,6 +8,7 @@
 
 | コミット | 内容 |
 |---|---|
+| `5cba375` | feat: Brier Score / LLM skill_score フィードバックループ実装 |
 | `6fdd155` | feat: ポジション更新を分析ループから独立 (30秒ごと、_positions_loop) |
 | `8318853` | fix: GTC約定誤検出を修正 - order取得失敗時はスキップ (None→filled 誤判定廃止) |
 | `09ae87b` | design: Closed Positions パネルを Active 側に合わせてリデザイン |
@@ -240,7 +241,7 @@ python main.py run --live
   - JSレンダリング必要なサイトはタイトルのみにフォールバック
   - 変更ファイル: `data_fetcher/news_fetcher.py`, `runner/orchestrator.py`, `requirements.txt`
 
-- [ ] **LLMキャリブレーション追跡 + Brier Scoreフィードバック** ← 次に実装
+- [x] **LLMキャリブレーション追跡 + Brier Scoreフィードバック** — 対応済み (`5cba375`)
 
   ### 背景・動機
   LLMの確率推定（例:「60%」）は実際に60%の確率で当たる保証がない（過大評価しやすい）。
