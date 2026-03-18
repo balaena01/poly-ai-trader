@@ -231,8 +231,13 @@ class PolyClient:
                     cid = str(m.get("conditionId") or m.get("condition_id") or "").lower()
                     if cid == market_id_lower:
                         return m
+                # 最初の1件だけキー名をデバッグ出力
+                if markets:
+                    print(f"   [market debug] keys={list(markets[0].keys())[:12]}")
+                    break
             return None
-        except Exception:
+        except Exception as e:
+            print(f"   [market debug] exception: {e}")
             return None
 
     def get_market_resolution(self, market_id: str, _debug: bool = False) -> Optional[float]:
