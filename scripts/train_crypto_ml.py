@@ -32,7 +32,7 @@ from analyst.crypto_features import CryptoFeatureExtractor, is_crypto_market
 from analyst.crypto_ml_analyst import CryptoMLAnalyst
 from analyst.ml_analyst import MLAnalyst
 
-COINGECKO_API = "https://api.coingecko.com/api/v3"
+BINANCE_API = "https://api.binance.com/api/v3"
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API  = "https://clob.polymarket.com"
@@ -206,50 +206,60 @@ async def fetch_crypto_markets(
 
 async def fetch_btc_eth_history(days: int) -> tuple[dict, dict]:
     """
-    CoinGecko から BTC/ETH の日足価格を取得し、
+    Binance Public API から BTC/ETH の日足価格を取得し、
     日付 (date string "YYYY-MM-DD") → 24h変化率 の辞書を返す。
 
     戻り値: (btc_returns, eth_returns)
       btc_returns["2024-06-15"] = 0.032  # +3.2%
+
+    Binance klines: APIキー不要、無料、1000本/リクエスト
     """
     timeout = httpx.Timeout(connect=15.0, read=60.0, write=10.0, pool=10.0)
+    start_ms = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000)
 
-    async def _fetch_coin(coin_id: str) -> dict:
-        """coin_id ("bitcoin" / "ethereum") → {date_str: return_24h}"""
-        url = f"{COINGECKO_API}/coins/{coin_id}/market_chart"
-        params = {
-            "vs_currency": "usd",
-            "days": str(days),
-            "interval": "daily",
-        }
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            # CoinGeckoは無料枠でrate limitがあるので1回だけ取得
-            resp = await client.get(url, params=params)
-            if resp.status_code == 429:
-                print(f"   ⚠️ CoinGecko rate limit, 60秒待機...")
-                await asyncio.sleep(60)
-                resp = await client.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-
-        prices = data.get("prices", [])  # [[timestamp_ms, price], ...]
-        if not prices:
-            return {}
-
+    async def _fetch_symbol(symbol: str) -> dict:
+        """BTCUSDT / ETHUSDT → {date_str: return_24h}"""
         result = {}
-        for i in range(1, len(prices)):
-            ts_ms, close = prices[i]
-            ts_ms_prev, prev_close = prices[i - 1]
-            dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
-            date_str = dt.strftime("%Y-%m-%d")
-            if prev_close > 0:
-                result[date_str] = (close - prev_close) / prev_close
+        current_start = start_ms
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            while True:
+                resp = await client.get(
+                    f"{BINANCE_API}/klines",
+                    params={
+                        "symbol": symbol,
+                        "interval": "1d",
+                        "startTime": current_start,
+                        "limit": 1000,
+                    },
+                )
+                if resp.status_code == 429:
+                    print(f"   ⚠️ Binance rate limit, 10秒待機...")
+                    await asyncio.sleep(10)
+                    continue
+                resp.raise_for_status()
+                candles = resp.json()
+                if not candles:
+                    break
+
+                for c in candles:
+                    # [openTime, open, high, low, close, volume, closeTime, ...]
+                    open_ts, open_p, _, _, close_p = c[0], float(c[1]), c[2], c[3], float(c[4])
+                    dt = datetime.fromtimestamp(open_ts / 1000, tz=timezone.utc)
+                    date_str = dt.strftime("%Y-%m-%d")
+                    if float(open_p) > 0:
+                        result[date_str] = (float(close_p) - float(open_p)) / float(open_p)
+
+                if len(candles) < 1000:
+                    break
+                current_start = candles[-1][6] + 1  # closeTime + 1ms
+
         return result
 
-    print("📡 CoinGecko から BTC/ETH ヒストリカル価格を取得中...")
-    btc_returns = await _fetch_coin("bitcoin")
-    await asyncio.sleep(2)  # rate limit 対策
-    eth_returns = await _fetch_coin("ethereum")
+    print("📡 Binance から BTC/ETH ヒストリカル価格を取得中 (APIキー不要)...")
+    btc_returns = await _fetch_symbol("BTCUSDT")
+    await asyncio.sleep(0.5)
+    eth_returns = await _fetch_symbol("ETHUSDT")
     print(f"   BTC: {len(btc_returns)} 日分 / ETH: {len(eth_returns)} 日分")
     return btc_returns, eth_returns
 
