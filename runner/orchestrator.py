@@ -887,6 +887,13 @@ class Orchestrator:
             int(_analysis_interval_min * 1.5),
         )
 
+        # 最小注文サイズチェック (Polymarket 最小: 5 tokens)
+        POLY_MIN_TOKENS = 5.0
+        token_count = size / current_price if current_price > 0 else 0
+        if token_count < POLY_MIN_TOKENS:
+            print(f"   ⚪ 発注サイズ不足 ({token_count:.2f} tokens < {POLY_MIN_TOKENS:.0f} 最小, ${size:.2f} @ {current_price:.4f})")
+            return
+
         # エクスポージャーチェック
         if not self.risk_manager.can_add_position(size):
             exposure_ratio = self.risk_manager.get_exposure_ratio()
