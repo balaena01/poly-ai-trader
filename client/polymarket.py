@@ -208,38 +208,17 @@ class PolyClient:
     # ========== マーケットデータ ==========
 
     def get_market(self, market_id: str) -> Optional[dict]:
-        """単一マーケットの生データを Gamma API から取得
+        """単一マーケットの生データを CLOB API から取得
         market_id は 0x... 形式の conditionId を想定。
-        Gamma API は conditionId フィルタが効かないため、
-        closed マーケット一覧を取得して条件IDで突合する。
         """
         import httpx
-        market_id_lower = market_id.lower()
         try:
-            # closed=true で取得して conditionId で突合
-            for closed_val in ("true", "false"):
-                resp = httpx.get(
-                    f"{GAMMA_API}/markets",
-                    params={"closed": closed_val, "limit": 100},
-                    timeout=10,
-                )
-                resp.raise_for_status()
-                markets = resp.json()
-                if not isinstance(markets, list):
-                    continue
-                for m in markets:
-                    cid = str(m.get("conditionId") or m.get("condition_id") or "").lower()
-                    if cid == market_id_lower:
-                        return m
-                # 最初の1件だけキー名と conditionId / outcomes をデバッグ出力
-                if markets:
-                    m0 = markets[0]
-                    print(f"   [market debug] keys={list(m0.keys())[:15]}")
-                    print(f"   [market debug] conditionId={m0.get('conditionId','?')[:30]} outcomes={str(m0.get('outcomes','?'))[:80]}")
-                    break
-            return None
-        except Exception as e:
-            print(f"   [market debug] exception: {e}")
+            resp = httpx.get(f"{HOST}/markets/{market_id}", timeout=10)
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
             return None
 
     def get_market_resolution(self, market_id: str, _debug: bool = False) -> Optional[float]:
@@ -260,12 +239,14 @@ class PolyClient:
                   f"outcomePrices={data.get('outcomePrices')} "
                   f"resolutionResult={data.get('resolutionResult')}")
 
-        # closed も resolved もなければ未解決
-        if not data.get("closed") and not data.get("resolved"):
+        # CLOB /markets/{id} のフィールドで判定
+        # active=true のうちは未解決
+        if data.get("active") is True:
             return None
 
-        print(f"   [resolution debug] closed={data.get('closed')} resolved={data.get('resolved')} "
-              f"active={data.get('active')} outcomePrices={data.get('outcomePrices')} "
+        print(f"   [resolution debug] active={data.get('active')} "
+              f"closed={data.get('closed')} "
+              f"outcomePrices={data.get('outcomePrices')} "
               f"resolutionResult={data.get('resolutionResult')} "
               f"question={str(data.get('question',''))[:40]}")
 
