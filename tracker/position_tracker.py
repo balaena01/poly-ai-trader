@@ -229,6 +229,15 @@ class PositionTracker:
     def get_open_positions(self) -> List[Position]:
         """オープンポジション取得"""
         return [p for p in self.positions.values() if p.status == PositionStatus.OPEN]
+
+    def get_closed_positions(self, limit: int = 20) -> List[Position]:
+        """クローズ済みポジションを新しい順で取得"""
+        closed = [
+            p for p in self.positions.values()
+            if p.status in (PositionStatus.RESOLVED, PositionStatus.CLOSED)
+        ]
+        closed.sort(key=lambda p: p.resolved_at or p.created_at, reverse=True)
+        return closed[:limit]
     
     def check_exit_conditions(
         self,

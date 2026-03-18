@@ -1001,9 +1001,34 @@ class Orchestrator:
                     ):
                         asyncio.create_task(self._retrain_ml_model())
 
+                    # ダッシュボードのクローズ済みポジションを更新
+                    if self.dashboard:
+                        await self._push_closed_positions_to_dashboard()
+
                 except Exception:
                     continue
 
+        except Exception:
+            pass
+
+    async def _push_closed_positions_to_dashboard(self):
+        """クローズ済みポジションをダッシュボードへ送信"""
+        try:
+            closed = self.position_tracker.get_closed_positions(limit=20)
+            closed_data = []
+            for pos in closed:
+                closed_data.append({
+                    "market_id": pos.market_id,
+                    "question": pos.question[:60],
+                    "side": pos.side,
+                    "entry_price": round(pos.entry_price, 6),
+                    "exit_price": round(pos.exit_price, 6) if pos.exit_price is not None else None,
+                    "size": round(pos.size, 2),
+                    "pnl": round(pos.pnl, 4),
+                    "status": pos.status.value,
+                    "resolved_at": pos.resolved_at.isoformat() if pos.resolved_at else None,
+                })
+            await self.dashboard.push_closed_positions(closed_data)
         except Exception:
             pass
     
@@ -1487,6 +1512,7 @@ class Orchestrator:
                 })
 
             await self.dashboard.push_positions(positions_data)
+            await self._push_closed_positions_to_dashboard()
 
             # ポートフォリオ集計 (PENDING は株式未保有のため除外)
             filled_data      = [p for p in positions_data if p.get("order_filled") is True]

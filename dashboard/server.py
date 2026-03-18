@@ -72,6 +72,7 @@ class DashboardServer:
             "recent_signals": [],
             "recent_trades": [],
             "open_positions": [],
+            "closed_positions": [],
             "markets": [],
             "prices": {"BTC": 0, "ETH": 0},
             "price_history": [],
@@ -208,6 +209,15 @@ class DashboardServer:
         self.state["open_positions"] = positions
         await self.manager.broadcast({
             "type": "positions",
+            "data": positions,
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    async def push_closed_positions(self, positions: list):
+        """クローズ済みポジション一覧を更新"""
+        self.state["closed_positions"] = positions
+        await self.manager.broadcast({
+            "type": "closed_positions",
             "data": positions,
             "timestamp": datetime.now().isoformat(),
         })
@@ -578,6 +588,27 @@ class DashboardServer:
         .pnl-flat { color: var(--text-dim); }
         .pnl-pending { color: var(--amber); font-style: italic; }
 
+        /* ── Closed Positions ────────────────────── */
+        .pos-section-head.closed-head {
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+            margin-top: 4px;
+        }
+        .pos-row.closed-win  { border-left: 2px solid var(--emerald); padding-left: 12px; opacity: 0.85; }
+        .pos-row.closed-loss { border-left: 2px solid var(--red);     padding-left: 12px; opacity: 0.85; }
+        .pos-row.closed-flat { border-left: 2px solid var(--border-bright); padding-left: 12px; opacity: 0.75; }
+        .resolved-tag {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            font-weight: 600;
+            padding: 2px 7px;
+            border-radius: 2px;
+            letter-spacing: 0.08em;
+        }
+        .resolved-tag.yes { background: var(--emerald-dim); border: 1px solid var(--emerald-border); color: var(--emerald); }
+        .resolved-tag.no  { background: var(--red-dim);     border: 1px solid rgba(232,64,96,0.4);    color: var(--red); }
+        .resolved-tag.early { background: var(--bg-elevated); border: 1px solid var(--border-bright); color: var(--text-secondary); }
+
         /* ── Signals ─────────────────────────────── */
         .sig-row {
             padding: 10px 0;
@@ -760,6 +791,15 @@ class DashboardServer:
             <div id="positions-list"><div class="empty">No open positions</div></div>
         </div>
 
+        <!-- Closed Positions -->
+        <div class="card col-full" id="closed-positions-card" style="display:none">
+            <div class="card-head">
+                <span class="card-title">Closed Positions</span>
+                <span class="card-badge" id="closed-positions-badge">—</span>
+            </div>
+            <div id="closed-positions-list"><div class="empty">No closed positions</div></div>
+        </div>
+
         <!-- Signals -->
         <div class="card">
             <div class="card-head">
@@ -896,7 +936,8 @@ class DashboardServer:
             case 'trigger':  upsertTrigger(msg.data); break;
             case 'trigger_removed': removeTrigger(msg.token_id); break;
             case 'price':    updatePrice(msg.symbol, msg.price); break;
-            case 'positions': renderPositions(msg.data || []); break;
+            case 'positions':        renderPositions(msg.data || []); break;
+        case 'closed_positions': renderClosedPositions(msg.data || []); break;
         }
     }
 
@@ -915,6 +956,7 @@ class DashboardServer:
         renderSignals(s.recent_signals || []);
         renderTriggers(s.active_triggers || []);
         renderPositions(s.open_positions || []);
+        renderClosedPositions(s.closed_positions || []);
         renderTrades(s.recent_trades || []);
         (s.edge_history || []).forEach(e => addEdgePoint(e.edge));
         (s.balance_history || []).forEach(b => addBalancePoint(b.balance, b.pnl));
@@ -1073,6 +1115,89 @@ class DashboardServer:
                 </div>
             </div>
             ${pnlHtml}
+        </div>`;
+    }
+
+    // ── Closed Positions ─────────────────────────
+    function renderClosedPositions(positions) {
+        const card = document.getElementById('closed-positions-card');
+        const wrap = document.getElementById('closed-positions-list');
+        if (!positions.length) { card.style.display = 'none'; return; }
+        card.style.display = '';
+
+        const totalPnl = positions.reduce((s, p) => s + (p.pnl || 0), 0);
+        const pnlStr = (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toFixed(2);
+        document.getElementById('closed-positions-badge').textContent =
+            positions.length + ' closed  ·  realized ' + pnlStr;
+
+        let html = `<div class="pos-section-head closed-head">⬜ Closed / Resolved <span class="section-count">${positions.length}</span></div>`;
+        positions.forEach(p => { html += buildClosedPosRow(p); });
+        wrap.innerHTML = html;
+    }
+
+    function buildClosedPosRow(pos) {
+        const pnl = pos.pnl || 0;
+        const isWin  = pnl >  0.005;
+        const isLoss = pnl < -0.005;
+        const rowClass = isWin ? 'pos-row closed-win' : isLoss ? 'pos-row closed-loss' : 'pos-row closed-flat';
+
+        const sideUpper = (pos.side || '').toUpperCase();
+        const isYes = sideUpper.includes('YES');
+        const sideClass = isYes ? 'yes' : 'no';
+        const sideLabel = isYes ? 'BUY YES' : 'BUY NO';
+
+        const dispEntry = isYes ? (pos.entry_price || 0) : (1 - (pos.entry_price || 0));
+
+        // 解決価格の表示
+        let resolvedTag = '';
+        let dispExit = '—';
+        if (pos.status === 'resolved') {
+            const exitVal = pos.exit_price;
+            if (exitVal >= 0.99) {
+                resolvedTag = '<span class="resolved-tag yes">RESOLVED YES</span>';
+                dispExit = isYes ? '100¢' : '0¢';
+            } else if (exitVal <= 0.01) {
+                resolvedTag = '<span class="resolved-tag no">RESOLVED NO</span>';
+                dispExit = isYes ? '0¢' : '100¢';
+            } else {
+                resolvedTag = '<span class="resolved-tag early">RESOLVED</span>';
+                dispExit = ((isYes ? exitVal : 1 - exitVal) * 100).toFixed(1) + '¢';
+            }
+        } else {
+            resolvedTag = '<span class="resolved-tag early">CLOSED</span>';
+            const exitVal = pos.exit_price || 0;
+            dispExit = ((isYes ? exitVal : 1 - exitVal) * 100).toFixed(1) + '¢';
+        }
+
+        let closedAt = '';
+        if (pos.resolved_at) {
+            const d = new Date(pos.resolved_at);
+            closedAt = d.toLocaleDateString('ja-JP', { month:'numeric', day:'numeric' })
+                     + ' ' + d.toLocaleTimeString('ja-JP', { hour:'2-digit', minute:'2-digit' });
+        }
+
+        const pnlCls  = isWin ? 'pnl-up' : isLoss ? 'pnl-down' : 'pnl-flat';
+        const pnlSign = pnl >= 0 ? '+' : '';
+
+        return `<div class="${rowClass}">
+            <div>
+                <div class="pos-question">${pos.question || 'Unknown'}</div>
+                <div class="pos-meta">
+                    <span class="pos-side ${sideClass}">${sideLabel}</span>
+                    <span class="pos-prices">
+                        <span>${(dispEntry*100).toFixed(1)}¢</span>
+                        <span class="pos-arrow flat">→</span>
+                        <span>${dispExit}</span>
+                    </span>
+                    <span class="pos-size">$${(pos.size||0).toFixed(2)}</span>
+                    ${resolvedTag}
+                    ${closedAt ? `<span class="pos-age">${closedAt}</span>` : ''}
+                </div>
+            </div>
+            <div class="pos-pnl">
+                <div class="pos-pnl-amt ${pnlCls}">${pnlSign}$${Math.abs(pnl).toFixed(2)}</div>
+                <div class="pos-pnl-pct ${pnlCls}">${pnlSign}${((pnl/(pos.size||1))*100).toFixed(1)}%</div>
+            </div>
         </div>`;
     }
 
