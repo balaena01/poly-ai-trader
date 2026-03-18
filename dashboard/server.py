@@ -78,6 +78,7 @@ class DashboardServer:
             "price_history": [],
             "edge_history": [],
             "balance_history": [],
+            "llm_skill": None,
         }
         
         self._setup_routes()
@@ -366,11 +367,11 @@ class DashboardServer:
         /* ── Stats Bar ───────────────────────────── */
         .stats-bar {
             display: grid;
-            grid-template-columns: repeat(5, 1fr);
+            grid-template-columns: repeat(6, 1fr);
             gap: 10px;
             margin-bottom: 18px;
         }
-        @media (max-width: 1100px) { .stats-bar { grid-template-columns: repeat(3,1fr); } }
+        @media (max-width: 1200px) { .stats-bar { grid-template-columns: repeat(3,1fr); } }
         @media (max-width: 700px)  { .stats-bar { grid-template-columns: repeat(2,1fr); } }
 
         .stat-tile {
@@ -777,6 +778,11 @@ class DashboardServer:
             <div class="stat-tile-value amber" id="triggers-count">0</div>
             <div class="stat-tile-sub" id="status-sub">—</div>
         </div>
+        <div class="stat-tile">
+            <div class="stat-tile-label">LLM Skill</div>
+            <div class="stat-tile-value" id="llm-skill">—</div>
+            <div class="stat-tile-sub" id="llm-skill-sub">calibrating…</div>
+        </div>
     </div>
 
     <!-- Main Grid -->
@@ -958,6 +964,7 @@ class DashboardServer:
         renderPositions(s.open_positions || []);
         renderClosedPositions(s.closed_positions || []);
         renderTrades(s.recent_trades || []);
+        setLlmSkill(s.llm_skill ?? null);
         (s.edge_history || []).forEach(e => addEdgePoint(e.edge));
         (s.balance_history || []).forEach(b => addBalancePoint(b.balance, b.pnl));
         if (s.balance > 0) addBalancePoint(s.balance, s.unrealized_pnl || 0);
@@ -986,7 +993,25 @@ class DashboardServer:
             const b = document.getElementById('status-badge');
             b.textContent = val.toUpperCase(); b.className = 'sys-status ' + val;
             document.getElementById('status-sub').textContent = val;
+        } else if (key === 'llm_skill') {
+            setLlmSkill(val);
         }
+    }
+
+    function setLlmSkill(v) {
+        const el  = document.getElementById('llm-skill');
+        const sub = document.getElementById('llm-skill-sub');
+        if (v === null || v === undefined) {
+            el.textContent = '—';
+            el.className = 'stat-tile-value';
+            sub.textContent = 'calibrating…';
+            return;
+        }
+        const sign = v >= 0 ? '+' : '';
+        el.textContent = sign + (v * 100).toFixed(1) + '%';
+        if (v > 0.10)      { el.className = 'stat-tile-value up';    sub.textContent = 'LLM > market'; }
+        else if (v >= 0)   { el.className = 'stat-tile-value amber';  sub.textContent = 'LLM ≈ market'; }
+        else               { el.className = 'stat-tile-value down';   sub.textContent = 'LLM < market'; }
     }
 
     function currentUnrealizedNum() {

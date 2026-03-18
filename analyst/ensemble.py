@@ -102,11 +102,18 @@ class EnsembleAnalyst:
         
         # Bayesian Aggregator
         self.aggregator = BayesianAggregator()
-        
+
+        # LLM skill score (BrierTrackerから更新される)
+        self._llm_skill_score: Optional[float] = None
+
         print(f"🤖 Ensemble Analyst 初期化")
         print(f"   LLM: {llm_model}")
         print(f"   ML: {'✓' if self.use_ml else '✗'}")
         print(f"   Orderflow: {'✓' if self.use_orderflow else '✗'}")
+
+    def set_llm_skill(self, skill_score: Optional[float]):
+        """BrierTrackerから得たskill_scoreを設定"""
+        self._llm_skill_score = skill_score
 
     def reload_ml_model(self, path: str):
         """実行中のMLモデルをホットスワップ (再学習後に呼び出す)"""
@@ -182,13 +189,25 @@ class EnsembleAnalyst:
         llm_conf = llm_result.get("confidence", 0.5) if llm_result else 0.5
         llm_reasoning = llm_result.get("reasoning", "") if llm_result else ""
 
-        print(f'   LLM: prob={llm_prob:.0%} conf={llm_conf:.0%} "{llm_reasoning[:80]}"')
-        
+        # skill_score に応じて LLM シグナルを減衰
+        # skill=None(未計測) → attenuation=1.0（そのまま）
+        # skill=0.5 → 1.0, skill=0.0 → 0.0, skill<0 → 0.0（市場価格に戻す）
+        if self._llm_skill_score is not None:
+            attenuation = min(1.0, max(0.0, self._llm_skill_score * 2))
+            effective_llm_prob = market.yes_price + (llm_prob - market.yes_price) * attenuation
+            if attenuation < 1.0:
+                print(f'   LLM: prob={llm_prob:.0%}→{effective_llm_prob:.0%} (skill={self._llm_skill_score:+.3f} att={attenuation:.2f}) conf={llm_conf:.0%} "{llm_reasoning[:60]}"')
+            else:
+                print(f'   LLM: prob={llm_prob:.0%} conf={llm_conf:.0%} "{llm_reasoning[:80]}"')
+        else:
+            effective_llm_prob = llm_prob
+            print(f'   LLM: prob={llm_prob:.0%} conf={llm_conf:.0%} (skill未計測) "{llm_reasoning[:70]}"')
+
         signals.append(SignalSource(
             name="LLM",
-            probability=llm_prob,
+            probability=effective_llm_prob,
             confidence=llm_conf,
-            accuracy=0.65,  # LLMの過去精度
+            accuracy=0.65,
         ))
         
         # ========== ML 分析 ==========
@@ -225,6 +244,29 @@ class EnsembleAnalyst:
                 accuracy=ml_accuracy,
             ))
         
+        # ========== skill_score < 0 → LLMシグナルをブロック ==========
+        # 20件以上の実績でLLMが市場より劣ると統計的に確認された場合
+        if self._llm_skill_score is not None and self._llm_skill_score < 0:
+            print(f"   ⛔ LLMシグナルブロック (skill={self._llm_skill_score:+.3f} < 0, 実績20件超)")
+            _empty_bayesian = self.aggregator.aggregate(market_price=market.yes_price, signals=[])
+            return EnsembleSignal(
+                market_id=market.market_id,
+                token_id=market.yes_token_id,
+                question=market.question,
+                llm_prob=llm_prob,
+                llm_conf=llm_conf,
+                ml_prob=ml_prob if 'ml_prob' in dir() else 0.5,
+                ml_conf=0.0,
+                orderflow_signal=0.0,
+                orderflow_conf=0.0,
+                bayesian_result=_empty_bayesian,
+                action=Action.HOLD,
+                final_probability=market.yes_price,
+                edge=0.0,
+                confidence=0.0,
+                llm_reasoning=llm_reasoning,
+            )
+
         # ========== 方向一致チェック ==========
         # LLM と ML が両方揃っているとき、市場価格に対する方向が一致しているか確認する。
         # 一方が「割安 (買い)」、他方が「割高 (売り)」に割れている場合は

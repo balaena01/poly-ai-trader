@@ -22,6 +22,7 @@ from risk import RiskManager, Auditor
 from data_fetcher import PolyWebSocket, GoogleNewsFetcher, NewsFetcher, PriceHistoryFetcher
 from factor import FactorManager
 from tracker import PositionTracker
+from tracker.brier_tracker import BrierTracker
 
 # Dashboard (optional)
 try:
@@ -150,6 +151,7 @@ class Orchestrator:
         self.auditor = Auditor()
         self.factor_manager = FactorManager()
         self.position_tracker = PositionTracker()
+        self.brier_tracker = BrierTracker()
         
         # Price History Fetcher
         self.price_fetcher = PriceHistoryFetcher()
@@ -566,7 +568,14 @@ class Orchestrator:
                 if self.stats["cycles"] % 10 == 0:
                     markets = await self._scan_markets()
                 self._last_markets = markets
-                
+
+                # LLM skill_score を更新してEnsemble・RiskManagerに反映
+                skill_score = self.brier_tracker.get_skill_score()
+                self.analyst.set_llm_skill(skill_score)
+                self.risk_manager.update_llm_skill(skill_score)
+                if self.dashboard:
+                    await self.dashboard.update_state("llm_skill", skill_score)
+
                 # 各マーケットを分析 (エクスポージャー上限はRiskManagerが管理)
                 self._triggers_this_cycle = 0
                 for market in markets:
@@ -702,7 +711,15 @@ class Orchestrator:
                 news_context=news_context,
                 previous_judgment=previous_judgment,
             )
-            
+
+            # LLM予測をBrierTrackerに記録（最初の1回のみ保存）
+            if signal and signal.llm_prob != 0.5:
+                self.brier_tracker.record_prediction(
+                    market_id=getattr(market, "market_id", ""),
+                    llm_prob=signal.llm_prob,
+                    market_price=getattr(market, "yes_price", 0.5),
+                )
+
             if not signal:
                 print(f"   ⚪ シグナルなし")
                 return
@@ -1022,6 +1039,9 @@ class Orchestrator:
 
                     outcome_str = "YES" if resolution >= 0.5 else "NO"
                     pnl = self.position_tracker.resolve_by_market(market_id, resolution)
+
+                    # BrierTrackerに実結果を記録
+                    self.brier_tracker.record_outcome(market_id, round(resolution))
 
                     print(f"🏁 マーケット解決: {outcome_str}  PnL ${pnl:+.2f}")
                     self.risk_manager.record_close(market_id, pnl)

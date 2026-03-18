@@ -102,6 +102,7 @@ class RiskManager:
         self.peak_balance = initial_balance
         
         self.kelly_fraction = kelly_fraction
+        self._base_kelly_fraction = kelly_fraction  # skill調整前の基準値
         self.max_position_pct = max_position_pct
         self.min_position = min_position
         
@@ -469,6 +470,26 @@ class RiskManager:
             "is_shutdown": self.is_shutdown,
         }
     
+    def update_llm_skill(self, skill_score: Optional[float]):
+        """
+        LLM skill_score に応じて Kelly 分率を動的調整。
+        skill=None(未計測) → 変更なし
+        skill>0.10  → 通常 (base)
+        skill 0~0.10 → base × 0.5
+        skill < 0   → base × 0.25（LLM有害期）
+        """
+        if skill_score is None:
+            return
+        if skill_score > 0.10:
+            new_fraction = self._base_kelly_fraction
+        elif skill_score >= 0.0:
+            new_fraction = self._base_kelly_fraction * 0.5
+        else:
+            new_fraction = self._base_kelly_fraction * 0.25
+        if abs(new_fraction - self.kelly_fraction) > 1e-6:
+            print(f"   📐 Kelly調整: {self.kelly_fraction:.3f} → {new_fraction:.3f} (skill={skill_score:+.3f})")
+            self.kelly_fraction = new_fraction
+
     def reset_consecutive_losses(self):
         """連敗カウントをリセット (手動介入用)"""
         self.consecutive_losses = 0
