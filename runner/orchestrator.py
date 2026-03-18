@@ -181,6 +181,8 @@ class Orchestrator:
         self._running = False
         self._ws_task: Optional[asyncio.Task] = None
         self._analysis_task: Optional[asyncio.Task] = None
+        self._positions_task: Optional[asyncio.Task] = None
+        self._last_markets: List = []  # 最新のマーケットリスト (positions loop が参照)
 
         # ML再学習管理
         self._resolved_since_last_training: int = 0
@@ -266,9 +268,14 @@ class Orchestrator:
             self._analysis_task = asyncio.create_task(
                 self._analysis_loop(markets)
             )
-            
+
+            # ポジション更新ループ起動 (30秒ごと、ダッシュボード専用)
+            self._positions_task = asyncio.create_task(
+                self._positions_loop()
+            )
+
             # タスクを待機
-            tasks = [self._ws_task, self._analysis_task]
+            tasks = [self._ws_task, self._analysis_task, self._positions_task]
             if dashboard_task:
                 tasks.append(dashboard_task)
             
@@ -558,6 +565,7 @@ class Orchestrator:
                 # マーケット再スキャン (10サイクルごと)
                 if self.stats["cycles"] % 10 == 0:
                     markets = await self._scan_markets()
+                self._last_markets = markets
                 
                 # 各マーケットを分析 (エクスポージャー上限はRiskManagerが管理)
                 self._triggers_this_cycle = 0
@@ -1472,6 +1480,17 @@ class Orchestrator:
         return None
 
     # ========== ポジションダッシュボード送信 ==========
+
+    async def _positions_loop(self):
+        """30秒ごとにポジション価格をダッシュボードへ送信（分析ループとは独立）"""
+        await asyncio.sleep(10)  # 起動直後は分析ループに任せる
+        while self._running:
+            try:
+                if self.dashboard:
+                    await self._push_positions_to_dashboard(self._last_markets)
+            except Exception:
+                pass
+            await asyncio.sleep(30)
 
     async def _push_positions_to_dashboard(self, markets: List):
         """オープンポジションの含み損益を計算してダッシュボードへ送信"""
