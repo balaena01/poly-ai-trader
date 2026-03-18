@@ -308,20 +308,42 @@ python main.py run --live
   **⑤ ダッシュボード表示**
   - stats bar に `LLM Skill` を追加（例: `+0.12` なら緑、`-0.05` なら赤）
 
-- [ ] **Crypto専用MLモデルの設計・実装** (将来)
+- [x] **Crypto専用MLモデルの設計・実装** — 設計完了、学習待ち
 
-  ### 背景・判断
-  - 混在MLモデル（スポーツ・政治・crypto全部混ぜて学習）は汎化しない
-  - ただしcrypto系マーケット（"Will BTC reach $100k?" 等）は
-    BTCモメンタム・ETH相関等の価格特徴量がoutcomeと直接連動する可能性がある
-  - **今はLLMのみで実績を積み、crypto解決済みマーケットが20〜50件溜まってから設計する**
+  ### 実装内容
 
-  ### 将来の実装方針
-  - カテゴリ判定: questionに BTC/ETH/Solana/crypto 等が含まれるマーケットを抽出
-  - Crypto専用特徴量: BTC/ETH価格変動率・相関係数・funding rate・オーダーフロー
-  - 専用学習データ: crypto解決済みマーケットのみで学習（非cryptoは混ぜない）
-  - 現在の汎用MLモデル (`lgb_model.pkl`) とは別ファイルで管理
-  - 実装タイミング: crypto解決済み20件 + LLM skill_score 計測完了後
+  **① `analyst/crypto_features.py`** — CryptoFeatures (36特徴量 = 28汎用 + 8crypto固有)
+  - 追加8特徴量: `btc_return_1h`, `btc_return_24h`, `eth_return_24h`, `btc_eth_corr`,
+    `market_btc_corr`, `btc_vol_regime`, `crypto_momentum_align`, `yes_price_distance`
+  - `is_crypto_market(question)`: BTC/ETH/Solana等のキーワード判定
+  - `CryptoFeatureExtractor`: 通常特徴量を内包し、BTC/ETHコンテキストを追加
+
+  **② `analyst/crypto_ml_analyst.py`** — CryptoMLAnalyst (MLAnalystのサブクラス)
+  - モデルパス: `models/lgb_crypto_model.pkl` (汎用モデルとは完全分離)
+  - `predict_crypto()`: btc_change_24h/eth_change_24h を受け取り CryptoFeatures で予測
+  - `is_available()`: モデルファイルの存在確認
+
+  **③ `scripts/train_crypto_ml.py`** — Crypto専用学習スクリプト
+  - Gamma API から `is_crypto_market()` フィルタで解決済みcryptoマーケットを収集
+  - 36特徴量で LightGBM 学習 → `models/lgb_crypto_model.pkl` に保存
+  ```bash
+  python scripts/train_crypto_ml.py --days 365 --limit 300
+  ```
+
+  **④ `analyst/ensemble.py`** — 条件分岐ルーティング
+  - crypto市場 + Crypto MLモデルあり → `CryptoMLAnalyst` を使用 (36特徴量)
+  - 非crypto市場 + `--use-ml` → 汎用 `MLAnalyst` を使用 (28特徴量)
+  - Crypto MLは `--use-ml` フラグ不要 (モデルがあれば自動適用)
+  - 方向対立ガード: crypto ML / 汎用 ML 両方に適用
+
+  ### 学習手順
+  1. crypto解決済みマーケットが30件以上蓄積されるのを待つ
+  2. `python scripts/train_crypto_ml.py --days 365 --min-volume 2000`
+  3. `models/lgb_crypto_model.pkl` が生成されれば次回起動時から自動適用
+
+  ### 注意
+  - 学習時は btc_change_24h 等を None (→ 0) として扱う (ヒストリカルデータなし)
+  - 実推論時は orchestrator から btc_change が渡されるため問題なし
 
 - [ ] **同一イベントへの集中リスク対策 (相関グループ管理)**
   - 現状: "GTA VI before X?" 系マーケットが複数トリガーに並ぶと実質1ポジション分のリスクになる

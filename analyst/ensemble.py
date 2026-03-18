@@ -10,6 +10,8 @@ from typing import List, Dict, Optional
 
 from .llm_analyst import LLMAnalyst, Signal, Action
 from .ml_analyst import MLAnalyst, MLPrediction
+from .crypto_ml_analyst import CryptoMLAnalyst
+from .crypto_features import CryptoFeatureExtractor, is_crypto_market
 from .orderflow import OrderflowDetector, OrderflowSignal, Trade
 from .bayesian import BayesianAggregator, BayesianResult, SignalSource
 from .features import FeatureExtractor
@@ -96,10 +98,19 @@ class EnsembleAnalyst:
         # Orderflow Detector
         self.use_orderflow = use_orderflow
         self.orderflow_detector = OrderflowDetector() if use_orderflow else None
-        
+
         # Feature Extractor
         self.feature_extractor = FeatureExtractor()
-        
+        self.crypto_feature_extractor = CryptoFeatureExtractor()
+
+        # Crypto ML Analyst (モデルがあれば自動ロード)
+        self.crypto_ml_analyst: Optional[CryptoMLAnalyst] = None
+        if CryptoMLAnalyst.is_available():
+            try:
+                self.crypto_ml_analyst = CryptoMLAnalyst()
+            except Exception as e:
+                print(f"⚠️ Crypto MLAnalyst 初期化失敗: {e}")
+
         # Bayesian Aggregator
         self.aggregator = BayesianAggregator()
 
@@ -109,6 +120,7 @@ class EnsembleAnalyst:
         print(f"🤖 Ensemble Analyst 初期化")
         print(f"   LLM: {llm_model}")
         print(f"   ML: {'✓' if self.use_ml else '✗'}")
+        print(f"   Crypto ML: {'✓' if self.crypto_ml_analyst else '✗ (モデルなし)'}")
         print(f"   Orderflow: {'✓' if self.use_orderflow else '✗'}")
 
     def set_llm_skill(self, skill_score: Optional[float]):
@@ -213,36 +225,64 @@ class EnsembleAnalyst:
         # ========== ML 分析 ==========
         ml_prob = 0.5
         ml_conf = 0.0
-        
-        if self.use_ml and self.ml_analyst and prices:
-            features = self.feature_extractor.extract(
-                prices=prices,
-                volumes=volumes,
-                bids=bids,
-                asks=asks,
-                trades=trades,
-                yes_price=market.yes_price,
-                market_volume=market.volume,
-                market_liquidity=market.liquidity,
-                end_date=market.end_date,
-                # llm_pred / llm_conf は渡さない: LLM は Bayesian で独立シグナルとして扱う
-            )
-            
-            ml_result = self.ml_analyst.predict(features)
-            ml_prob = ml_result.probability
-            ml_conf = ml_result.confidence
 
-            # conf が低いほど accuracy を 0.5 に近づける (0.5 + 0.22 × conf)
-            # conf=1.0 → 0.72, conf=0.5 → 0.61, conf=0.3 → 0.567
-            ml_accuracy = 0.5 + 0.22 * ml_conf
-            print(f"    ML: prob={ml_prob:.0%} conf={ml_conf:.0%} (eff_accuracy={ml_accuracy:.3f})")
+        # crypto系マーケット判定
+        _is_crypto = is_crypto_market(market.question)
 
-            signals.append(SignalSource(
-                name="LightGBM",
-                probability=ml_prob,
-                confidence=ml_conf,
-                accuracy=ml_accuracy,
-            ))
+        if prices:
+            # --- Crypto ML (優先): crypto市場 + モデルあり ---
+            if _is_crypto and self.crypto_ml_analyst and self.crypto_ml_analyst.model:
+                crypto_features = self.crypto_feature_extractor.extract(
+                    prices=prices,
+                    volumes=volumes,
+                    bids=bids,
+                    asks=asks,
+                    trades=trades,
+                    yes_price=market.yes_price,
+                    market_volume=market.volume,
+                    market_liquidity=market.liquidity,
+                    end_date=market.end_date,
+                    btc_change_24h=btc_change,
+                    eth_change_24h=eth_change,
+                )
+                ml_result = self.crypto_ml_analyst.predict(crypto_features)
+                ml_prob = ml_result.probability
+                ml_conf = ml_result.confidence
+                ml_accuracy = 0.5 + 0.22 * ml_conf
+                print(f"   CryptoML: prob={ml_prob:.0%} conf={ml_conf:.0%} (eff_accuracy={ml_accuracy:.3f})")
+
+                signals.append(SignalSource(
+                    name="CryptoLightGBM",
+                    probability=ml_prob,
+                    confidence=ml_conf,
+                    accuracy=ml_accuracy,
+                ))
+
+            # --- 汎用 ML: use_ml=True かつ 非cryptoマーケット (または crypto ML 未ロード) ---
+            elif self.use_ml and self.ml_analyst and not _is_crypto:
+                features = self.feature_extractor.extract(
+                    prices=prices,
+                    volumes=volumes,
+                    bids=bids,
+                    asks=asks,
+                    trades=trades,
+                    yes_price=market.yes_price,
+                    market_volume=market.volume,
+                    market_liquidity=market.liquidity,
+                    end_date=market.end_date,
+                )
+                ml_result = self.ml_analyst.predict(features)
+                ml_prob = ml_result.probability
+                ml_conf = ml_result.confidence
+                ml_accuracy = 0.5 + 0.22 * ml_conf
+                print(f"    ML: prob={ml_prob:.0%} conf={ml_conf:.0%} (eff_accuracy={ml_accuracy:.3f})")
+
+                signals.append(SignalSource(
+                    name="LightGBM",
+                    probability=ml_prob,
+                    confidence=ml_conf,
+                    accuracy=ml_accuracy,
+                ))
         
         # ========== skill_score < 0 → LLMシグナルをブロック ==========
         # 20件以上の実績でLLMが市場より劣ると統計的に確認された場合
@@ -271,7 +311,8 @@ class EnsembleAnalyst:
         # LLM と ML が両方揃っているとき、市場価格に対する方向が一致しているか確認する。
         # 一方が「割安 (買い)」、他方が「割高 (売り)」に割れている場合は
         # 確率を平均化しても意味がなく、エッジなしとして扱う。
-        if self.use_ml and self.ml_analyst and prices:
+        _ml_active = ml_conf > 0.0  # ML が実際にシグナルを出しているか
+        if _ml_active and prices:
             llm_bullish = llm_prob > market.yes_price
             ml_bullish  = ml_prob  > market.yes_price
             if llm_bullish != ml_bullish:
