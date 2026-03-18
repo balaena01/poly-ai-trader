@@ -155,7 +155,9 @@ class Orchestrator:
         self.factor_manager = FactorManager()
         self.position_tracker = PositionTracker()
         self.brier_tracker = BrierTracker()
-        
+        # 起動時点で skill_score を適用 (未計測 → 半Kelly)
+        self.risk_manager.update_llm_skill(self.brier_tracker.get_skill_score())
+
         # Price History Fetcher
         self.price_fetcher = PriceHistoryFetcher()
         

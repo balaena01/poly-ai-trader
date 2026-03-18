@@ -473,21 +473,22 @@ class RiskManager:
     def update_llm_skill(self, skill_score: Optional[float]):
         """
         LLM skill_score に応じて Kelly 分率を動的調整。
-        skill=None(未計測) → 変更なし
+        skill=None(未計測) → base × 0.5 (キャリブレーション期間中は半Kelly)
         skill>0.10  → 通常 (base)
         skill 0~0.10 → base × 0.5
         skill < 0   → base × 0.25（LLM有害期）
         """
         if skill_score is None:
-            return
-        if skill_score > 0.10:
+            new_fraction = self._base_kelly_fraction * 0.5  # 未計測 → 半Kelly
+        elif skill_score > 0.10:
             new_fraction = self._base_kelly_fraction
         elif skill_score >= 0.0:
             new_fraction = self._base_kelly_fraction * 0.5
         else:
             new_fraction = self._base_kelly_fraction * 0.25
         if abs(new_fraction - self.kelly_fraction) > 1e-6:
-            print(f"   📐 Kelly調整: {self.kelly_fraction:.3f} → {new_fraction:.3f} (skill={skill_score:+.3f})")
+            label = "未計測" if skill_score is None else f"{skill_score:+.3f}"
+            print(f"   📐 Kelly調整: {self.kelly_fraction:.3f} → {new_fraction:.3f} (skill={label})")
             self.kelly_fraction = new_fraction
 
     def reset_consecutive_losses(self):
