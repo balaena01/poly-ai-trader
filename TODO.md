@@ -8,6 +8,7 @@
 
 | コミット | 内容 |
 |---|---|
+| `837200a` | feat: スポーツ系マーケットのトレードをスキップ (Brier記録は継続) |
 | `ebc923a` | fix: LLM skill未計測期間 (20件未満) を半Kelly運用に変更 |
 | `95c44f6` | fix: CoinGecko → Binance Public API に切り替え (APIキー不要) |
 | `b59a3a6` | fix: train_crypto_ml.py に CoinGecko BTC/ETH ヒストリカル価格取得を追加 |
@@ -394,6 +395,19 @@ python main.py run --live
   1. `is_crypto_market()` のキーワード精度向上 — "Avalanche"→"AVAX"のみ等
   2. 学習データから "Up or Down" 短期バイナリを除外
   3. 十分なデータ品質が確認できてから再学習
+
+- [x] **スポーツ系マーケットのトレードスキップ** — 対応済み (`837200a`)
+  - `is_sports_market()`: NFL/NBA/UFC等のキーワードで判定
+  - トレードはスキップするがBrier記録は継続 (skill_score蓄積に活用)
+  - 誤検知対策: "beat/win" 等の汎用語は除外しスポーツ固有語のみ使用
+
+- [ ] **LLMへの価格推移インプット**
+  - 現状: question・現在のYES価格・BTC/ETH価格・ニュースのみ
+  - 追加候補: 過去7日の価格推移サマリー (最高・最低・トレンド方向・直近変化率)
+  - 実装場所: `analyst/ensemble.py` の `context` 組み立て部分
+  - `prices` はすでに `analyze()` に渡されているので取り出して要約するだけ
+  - LLMトークン節約のため生データでなくサマリー文字列で渡す
+    例: `"価格推移(7d): 最高=0.72 最低=0.41 現在=0.62 7d変化=+21%"`
 
 - [ ] **同一イベントへの集中リスク対策 (相関グループ管理)**
   - 現状: "GTA VI before X?" 系マーケットが複数トリガーに並ぶと実質1ポジション分のリスクになる
