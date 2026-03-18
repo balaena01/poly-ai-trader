@@ -210,21 +210,27 @@ class PolyClient:
     def get_market(self, market_id: str) -> Optional[dict]:
         """単一マーケットの生データを Gamma API から取得
         market_id は 0x... 形式の conditionId を想定。
+        Gamma API は conditionId フィルタが効かないため、
+        closed マーケット一覧を取得して条件IDで突合する。
         """
         import httpx
+        market_id_lower = market_id.lower()
         try:
-            # conditionId クエリで検索 (path パラメータは数値IDのみ受け付ける)
-            resp = httpx.get(
-                f"{GAMMA_API}/markets",
-                params={"conditionId": market_id, "limit": 1},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, list) and data:
-                return data[0]
-            if isinstance(data, dict) and data:
-                return data
+            # closed=true で取得して conditionId で突合
+            for closed_val in ("true", "false"):
+                resp = httpx.get(
+                    f"{GAMMA_API}/markets",
+                    params={"closed": closed_val, "limit": 100},
+                    timeout=10,
+                )
+                resp.raise_for_status()
+                markets = resp.json()
+                if not isinstance(markets, list):
+                    continue
+                for m in markets:
+                    cid = str(m.get("conditionId") or m.get("condition_id") or "").lower()
+                    if cid == market_id_lower:
+                        return m
             return None
         except Exception:
             return None
