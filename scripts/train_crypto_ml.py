@@ -32,6 +32,8 @@ from analyst.crypto_features import CryptoFeatureExtractor, is_crypto_market
 from analyst.crypto_ml_analyst import CryptoMLAnalyst
 from analyst.ml_analyst import MLAnalyst
 
+COINGECKO_API = "https://api.coingecko.com/api/v3"
+
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API  = "https://clob.polymarket.com"
 
@@ -199,22 +201,99 @@ async def fetch_crypto_markets(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# CoinGecko BTC/ETH ヒストリカル価格取得
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def fetch_btc_eth_history(days: int) -> tuple[dict, dict]:
+    """
+    CoinGecko から BTC/ETH の日足価格を取得し、
+    日付 (date string "YYYY-MM-DD") → 24h変化率 の辞書を返す。
+
+    戻り値: (btc_returns, eth_returns)
+      btc_returns["2024-06-15"] = 0.032  # +3.2%
+    """
+    timeout = httpx.Timeout(connect=15.0, read=60.0, write=10.0, pool=10.0)
+
+    async def _fetch_coin(coin_id: str) -> dict:
+        """coin_id ("bitcoin" / "ethereum") → {date_str: return_24h}"""
+        url = f"{COINGECKO_API}/coins/{coin_id}/market_chart"
+        params = {
+            "vs_currency": "usd",
+            "days": str(days),
+            "interval": "daily",
+        }
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            # CoinGeckoは無料枠でrate limitがあるので1回だけ取得
+            resp = await client.get(url, params=params)
+            if resp.status_code == 429:
+                print(f"   ⚠️ CoinGecko rate limit, 60秒待機...")
+                await asyncio.sleep(60)
+                resp = await client.get(url, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+
+        prices = data.get("prices", [])  # [[timestamp_ms, price], ...]
+        if not prices:
+            return {}
+
+        result = {}
+        for i in range(1, len(prices)):
+            ts_ms, close = prices[i]
+            ts_ms_prev, prev_close = prices[i - 1]
+            dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+            date_str = dt.strftime("%Y-%m-%d")
+            if prev_close > 0:
+                result[date_str] = (close - prev_close) / prev_close
+        return result
+
+    print("📡 CoinGecko から BTC/ETH ヒストリカル価格を取得中...")
+    btc_returns = await _fetch_coin("bitcoin")
+    await asyncio.sleep(2)  # rate limit 対策
+    eth_returns = await _fetch_coin("ethereum")
+    print(f"   BTC: {len(btc_returns)} 日分 / ETH: {len(eth_returns)} 日分")
+    return btc_returns, eth_returns
+
+
+def _lookup_crypto_returns(
+    analysis_dt: datetime,
+    btc_returns: dict,
+    eth_returns: dict,
+) -> tuple[float | None, float | None]:
+    """
+    分析時点の日付に対応する BTC/ETH 24h変化率を返す。
+    当日データがなければ前後1日を探索。
+    """
+    for delta in [0, -1, 1, -2, 2]:
+        dt = analysis_dt + timedelta(days=delta)
+        key = dt.strftime("%Y-%m-%d")
+        btc = btc_returns.get(key)
+        eth = eth_returns.get(key)
+        if btc is not None or eth is not None:
+            return btc, eth
+    return None, None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 学習データ収集
 # ──────────────────────────────────────────────────────────────────────────────
 
 async def collect_training_data(
     markets: list[dict],
+    btc_returns: dict,
+    eth_returns: dict,
     analysis_point_pct: float = 0.60,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     各マーケットの「期間 analysis_point_pct 時点」スナップショットで
     CryptoFeatures (36特徴量) を生成。
+    btc_returns / eth_returns は CoinGecko から取得した日付→変化率辞書。
     """
     fetcher = PriceHistoryFetcher()
     extractor = CryptoFeatureExtractor()
     timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
 
     X_list, y_list = [], []
+    btc_matched = 0  # BTC価格が取得できた件数
 
     async with httpx.AsyncClient(timeout=timeout) as hclient:
         for i, m in enumerate(markets):
@@ -240,7 +319,21 @@ async def collect_training_data(
                 if yes_price <= 0.15 or yes_price >= 0.85:
                     continue
 
-                # 3. 取引履歴
+                # 3. 分析時点の日時を特定 (BTC/ETH価格のlookupに使用)
+                analysis_dt = price_points[analysis_idx - 1].t if hasattr(price_points[analysis_idx - 1], 't') else None
+                if analysis_dt is None and m.get("closed_time"):
+                    # closed_time × analysis_point_pct で概算
+                    created = m.get("closed_time")
+                    if created:
+                        analysis_dt = created  # fallback: closed_time を使用
+
+                btc_24h, eth_24h = None, None
+                if analysis_dt:
+                    btc_24h, eth_24h = _lookup_crypto_returns(analysis_dt, btc_returns, eth_returns)
+                    if btc_24h is not None:
+                        btc_matched += 1
+
+                # 4. 取引履歴
                 from analyst.orderflow import Trade as OFTrade
                 trades = []
                 try:
@@ -267,11 +360,7 @@ async def collect_training_data(
                 except Exception:
                     pass
 
-                # 4. CryptoFeatures 抽出
-                # BTC/ETH価格は分析時点のデータがないため、
-                # 学習時は btc_change_24h 等を 0 (不明) として扱う。
-                # 実推論時には実際の BTC価格が渡される。
-                # この扱いの差異は許容範囲 (feature importance で自動調整される)
+                # 5. CryptoFeatures 抽出 (BTC/ETH変化率を注入)
                 features = extractor.extract(
                     prices=history[-100:],
                     trades=trades if trades else None,
@@ -279,25 +368,27 @@ async def collect_training_data(
                     market_volume=m["volume"],
                     market_liquidity=m["liquidity"],
                     end_date=m["end_date"],
-                    # BTCコンテキストは不明 → デフォルト0
-                    btc_change_24h=None,
-                    eth_change_24h=None,
-                    btc_prices_1h=None,
+                    btc_change_24h=btc_24h,
+                    eth_change_24h=eth_24h,
+                    btc_prices_1h=None,  # 時間足データは学習時は不可
                 )
 
                 X_list.append(features.to_list())
                 y_list.append(1 if m["outcome"] == "YES" else 0)
 
                 outcome_str = "YES✅" if m["outcome"] == "YES" else "NO ❌"
+                btc_str = f"btc={btc_24h:+.1%}" if btc_24h is not None else "btc=N/A"
                 print(
-                    f"  [{i+1:3}/{len(markets)}] {m['question']:<55} "
-                    f"price={yes_price:.3f} → {outcome_str}"
+                    f"  [{i+1:3}/{len(markets)}] {m['question']:<50} "
+                    f"price={yes_price:.3f} {btc_str} → {outcome_str}"
                 )
 
             except Exception as e:
                 print(f"  [{i+1:3}/{len(markets)}] スキップ: {e}")
 
             await asyncio.sleep(0.3)
+
+    print(f"   BTC価格マッチ率: {btc_matched}/{len(X_list)} 件")
 
     X = np.array(X_list) if X_list else np.array([]).reshape(0, 0)
     y = np.array(y_list) if y_list else np.array([])
@@ -398,13 +489,21 @@ async def main():
     if len(markets) > 10:
         print(f"   ... 他 {len(markets) - 10} 件\n")
 
-    # 2. 特徴量 & ラベル収集
-    X, y = await collect_training_data(markets, analysis_point_pct=args.analysis_point)
+    # 2. CoinGecko から BTC/ETH ヒストリカル価格を取得
+    btc_returns, eth_returns = await fetch_btc_eth_history(days=args.days + 5)  # 少し余裕を持たせる
+
+    # 3. 特徴量 & ラベル収集
+    X, y = await collect_training_data(
+        markets,
+        btc_returns=btc_returns,
+        eth_returns=eth_returns,
+        analysis_point_pct=args.analysis_point,
+    )
     if len(X) == 0:
         print("❌ 学習データを収集できませんでした")
         return
 
-    # 3. 学習 & 保存
+    # 4. 学習 & 保存
     train_and_save(X, y, args.output)
 
 
