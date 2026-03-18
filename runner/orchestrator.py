@@ -37,6 +37,35 @@ class RunMode(Enum):
     LIVE = "live"
 
 
+_SPORTS_KEYWORDS = [
+    # 競技種目
+    "nfl", "nba", "nhl", "mlb", "mls", "ufc", "pga",
+    "soccer", "football", "basketball", "baseball", "hockey", "tennis",
+    "golf", "boxing", "mma", "rugby", "cricket", "volleyball",
+    # 試合・大会
+    "match", " vs ", " vs.", "game ", "playoff", "championship",
+    "tournament", "league", "cup", "serie", "super bowl", "world series",
+    "stanley cup", "grand slam", "wimbledon", "us open", "french open",
+    "australian open", "masters", "open championship",
+    "world cup", "euro ", "champions league", "premier league",
+    "la liga", "bundesliga", "serie a", "ligue 1",
+    # 試合結果 (スポーツ文脈に限定)
+    "o/u ", "over/under", "moneyline", "cover the",
+    "final score", "first half", "second half", "overtime",
+    # スポーツチーム・大会名によく出る単語
+    "warriors", "lakers", "celtics", "heat ", "bulls ",
+    "patriots", "chiefs ", "eagles ", "cowboys",
+    "yankees", "dodgers", "red sox",
+    "oilers", "sharks ", "leafs", "bruins",
+    # 選手名は動的なので除外、試合構造ワードで判定
+]
+
+def is_sports_market(question: str) -> bool:
+    """スポーツ系マーケットを判定 (分析はするがトレード対象外)"""
+    q = question.lower()
+    return any(kw in q for kw in _SPORTS_KEYWORDS)
+
+
 def _order_status(order) -> Optional[str]:
     """py-clob-client の注文オブジェクト(dict or object)からステータス文字列を取得"""
     if order is None:
@@ -759,10 +788,15 @@ class Orchestrator:
                 flags_str = ", ".join([f.value for f in audit_result.flags]) if audit_result.flags else "unknown"
                 print(f"   🚫 ブロック: {flags_str}")
                 return
-            
+
+            # スポーツ系マーケットはトレード対象外 (Brier記録のみ)
+            if is_sports_market(question):
+                print(f"   🏟️ スポーツ市場のためトレードスキップ (Brier記録のみ)")
+                return
+
             # 信頼度調整
             adjusted_confidence = audit_result.adjusted_confidence
-            
+
             # 最小条件チェック
             if abs(signal.edge) < self.config.min_edge:
                 print(f"   ⚪ エッジ不足 ({signal.edge:.1%}, 閾値: ±{self.config.min_edge:.0%})")
