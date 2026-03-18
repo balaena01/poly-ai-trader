@@ -208,14 +208,24 @@ class PolyClient:
     # ========== マーケットデータ ==========
 
     def get_market(self, market_id: str) -> Optional[dict]:
-        """単一マーケットの生データを Gamma API から取得"""
+        """単一マーケットの生データを Gamma API から取得
+        market_id は 0x... 形式の conditionId を想定。
+        """
         import httpx
         try:
-            resp = httpx.get(f"{GAMMA_API}/markets/{market_id}", timeout=10)
-            if resp.status_code == 404:
-                return None
+            # conditionId クエリで検索 (path パラメータは数値IDのみ受け付ける)
+            resp = httpx.get(
+                f"{GAMMA_API}/markets",
+                params={"conditionId": market_id, "limit": 1},
+                timeout=10,
+            )
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+            if isinstance(data, list) and data:
+                return data[0]
+            if isinstance(data, dict) and data:
+                return data
+            return None
         except Exception:
             return None
 
