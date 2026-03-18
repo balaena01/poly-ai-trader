@@ -723,6 +723,7 @@ class Orchestrator:
                     market_id=getattr(market, "market_id", ""),
                     llm_prob=signal.llm_prob,
                     market_price=getattr(market, "yes_price", 0.5),
+                    yes_token_id=getattr(market, "yes_token_id", ""),
                 )
 
             if not signal:
@@ -996,7 +997,12 @@ class Orchestrator:
     async def _check_resolved_markets(self):
         """解決済みマーケットをチェックしてPnL確定・自動クローズ"""
         open_market_ids = self.position_tracker.get_open_market_ids()
-        if not open_market_ids:
+
+        # ポジションなしでも Brier 予測が未解決のマーケットを追加チェック
+        brier_unresolved = self.brier_tracker.get_unresolved_market_ids()
+        brier_only_ids = [mid for mid in brier_unresolved if mid not in open_market_ids]
+
+        if not open_market_ids and not brier_only_ids:
             return
 
         try:
@@ -1070,6 +1076,31 @@ class Orchestrator:
                     # ダッシュボードのクローズ済みポジションを更新
                     if self.dashboard:
                         await self._push_closed_positions_to_dashboard()
+
+                except Exception:
+                    continue
+
+            # ========== ポジションなし・Brierのみ未解決マーケット ==========
+            for market_id in brier_only_ids:
+                try:
+                    market_data = _pc.get_market(market_id)
+                    if not market_data or not market_data.get("closed"):
+                        continue  # まだ未解決
+
+                    # yes_token_id を brier_tracker から取得
+                    yes_token_id = self.brier_tracker.get_yes_token_id(market_id)
+                    if not yes_token_id:
+                        continue  # token_id 不明 → スキップ
+
+                    last_price = _pc.get_last_trade_price(yes_token_id)
+                    if last_price is None:
+                        continue
+
+                    # YES token の last_price = resolution
+                    resolution = last_price
+                    self.brier_tracker.record_outcome(market_id, round(resolution))
+                    outcome_str = "YES" if resolution >= 0.5 else "NO"
+                    print(f"📊 Brier解決記録: {outcome_str} (market={market_id[:12]}... resolution={resolution:.3f})")
 
                 except Exception:
                     continue

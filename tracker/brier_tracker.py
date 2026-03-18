@@ -40,18 +40,35 @@ class BrierTracker:
         market_id: str,
         llm_prob: float,
         market_price: float,
+        yes_token_id: str = "",
     ):
         """シグナル生成時にLLM予測を記録（同一マーケットは最初の1件のみ）"""
         if market_id in self._records:
-            return  # 既に記録済み → 上書きしない
+            # yes_token_id が未保存なら補完 (古いエントリへの後方互換)
+            if yes_token_id and not self._records[market_id].get("yes_token_id"):
+                self._records[market_id]["yes_token_id"] = yes_token_id
+                self._save()
+            return
         self._records[market_id] = {
             "llm_prob": round(llm_prob, 4),
             "market_price": round(market_price, 4),
+            "yes_token_id": yes_token_id,
             "predicted_at": datetime.now().isoformat(),
             "outcome": None,
             "resolved_at": None,
         }
         self._save()
+
+    def get_unresolved_market_ids(self) -> list:
+        """outcome=None (未解決) の market_id 一覧を返す"""
+        return [
+            mid for mid, r in self._records.items()
+            if r.get("outcome") is None
+        ]
+
+    def get_yes_token_id(self, market_id: str) -> str:
+        """保存済みの yes_token_id を返す (なければ空文字)"""
+        return self._records.get(market_id, {}).get("yes_token_id", "")
 
     def record_outcome(self, market_id: str, outcome: float):
         """マーケット解決時に実結果を記録"""
