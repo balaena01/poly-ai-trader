@@ -231,9 +231,11 @@ class PolyClient:
                     cid = str(m.get("conditionId") or m.get("condition_id") or "").lower()
                     if cid == market_id_lower:
                         return m
-                # 最初の1件だけキー名をデバッグ出力
+                # 最初の1件だけキー名と conditionId / outcomes をデバッグ出力
                 if markets:
-                    print(f"   [market debug] keys={list(markets[0].keys())[:12]}")
+                    m0 = markets[0]
+                    print(f"   [market debug] keys={list(m0.keys())[:15]}")
+                    print(f"   [market debug] conditionId={m0.get('conditionId','?')[:30]} outcomes={str(m0.get('outcomes','?'))[:80]}")
                     break
             return None
         except Exception as e:
