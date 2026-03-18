@@ -8,6 +8,17 @@
 
 | コミット | 内容 |
 |---|---|
+| `4567d77` | fix: orderbook 404 のポジションのみ解決判定 (active=True マーケット誤クローズ修正) |
+| `028355e` | fix: outcomePrices=[0,0] のVOIDマーケットを正しくクローズ |
+| `6002274` | fix: active=True マーケットを解決済み判定から除外 (一時的対応、後続で改善) |
+| `ccd8657` | feat: 解決済みマーケットの自動クローズ実装 (PolyClient.get_market_resolution追加) |
+| `184e624` | fix: get_market を conditionId クエリパラメータで取得するよう修正 |
+| `7c0e5c4` | feat: Closed Positions をダッシュボードに表示 (WIN/LOSS/VOID バッジ・累計PnL) |
+| `9799d69` | fix: orderbook 404 エラーの静音化 + 警告を1回のみ表示 |
+| `506c233` | fix: 旧レコードの誤格納NOトークンをヒューリスティックで検出・反転 |
+| `6b99222` | fix: Position に yes_token_id 追加でスキャン外現在価格を正確に取得 |
+| `588e3b1` | fix: ANTHROPIC_API_KEY を CLI サブプロセス env から除外 (Invalid API key 修正) |
+| `d85e40b` | fix: BUY_YES trigger に YES token を正しく割り当て (大文字小文字不一致バグ) |
 | `e46993a` | feat: LLM判断ログ表示 + トリガー時キャッシュ + 再分析時に前回判断をコンテキスト追加 |
 | `dcce1ee` | feat: backtest --use-llm 時にニュース取得を追加 (orchestrator と同じ動作) |
 | `f7147ca` | feat: backtest LLMシグナルのログ表示追加 (prob/conf/reasoning) |
@@ -238,7 +249,7 @@ poly-ai-trader/
 ├── runner/
 │   └── orchestrator.py  # 3層統合ランナー (メインロジック)
 ├── analyst/
-│   ├── llm_analyst.py   # LLM分析 (LiteLLM)
+│   ├── llm_analyst.py   # LLM分析 (Claude Code CLI サブプロセス)
 │   ├── ml_analyst.py    # LightGBM
 │   ├── orderflow.py     # クジラ/流動性/クラスタ検出
 │   ├── bayesian.py      # Bayesian統合 (market_liquidity対応済み)
