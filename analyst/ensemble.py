@@ -195,6 +195,7 @@ class EnsembleAnalyst:
                 for i, p in enumerate(daily_prices)
             ]
             context["price_history"] = ", ".join(labels)
+            print(f"   価格推移(日足): {context['price_history']}")
         if previous_judgment:
             context["previous_judgment"] = (
                 f'[前回判断] prob={previous_judgment.get("probability", 0.5):.0%} '
