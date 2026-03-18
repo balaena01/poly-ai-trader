@@ -184,6 +184,17 @@ class EnsembleAnalyst:
             context["eth_change"] = eth_change
         if news_context:
             context["news"] = news_context
+        # prices (1分足) から日足スナップショットを生成 (1440本 = 1日)
+        if prices and len(prices) >= 1440:
+            daily_prices = prices[::1440][-14:]
+            n = len(daily_prices)
+            from datetime import timedelta
+            today = datetime.now()
+            labels = [
+                f"{(today - timedelta(days=(n - 1 - i))).month}/{(today - timedelta(days=(n - 1 - i))).day}={p:.2f}"
+                for i, p in enumerate(daily_prices)
+            ]
+            context["price_history"] = ", ".join(labels)
         if previous_judgment:
             context["previous_judgment"] = (
                 f'[前回判断] prob={previous_judgment.get("probability", 0.5):.0%} '
