@@ -207,6 +207,26 @@ class PolyClient:
     
     # ========== マーケットデータ ==========
 
+    def get_last_trade_price(self, token_id: str) -> Optional[float]:
+        """トークンの最終取引価格を取得（解決済み判定用）"""
+        import httpx
+        try:
+            resp = httpx.get(f"{HOST}/last-trade-price", params={"token_id": token_id}, timeout=10)
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            # {"price": "0.97"} or {"data": [{"price": "..."}]}
+            if isinstance(data, dict):
+                price_val = data.get("price")
+                if price_val is not None:
+                    return float(price_val)
+                items = data.get("data") or []
+                if items:
+                    return float(items[0].get("price", 0))
+            return None
+        except Exception:
+            return None
+
     def get_market(self, market_id: str) -> Optional[dict]:
         """単一マーケットの生データを CLOB API から取得
         market_id は 0x... 形式の conditionId を想定。
@@ -215,12 +235,9 @@ class PolyClient:
         try:
             resp = httpx.get(f"{HOST}/markets/{market_id}", timeout=10)
             if resp.status_code == 404:
-                print(f"   [market debug] 404: {market_id[:20]}...")
                 return None
             resp.raise_for_status()
-            data = resp.json()
-            print(f"   [market debug] got market: question={str(data.get('question',''))[:50]} keys={list(data.keys())[:8]}")
-            return data
+            return resp.json()
         except Exception as e:
             print(f"   [market debug] error: {e}")
             return None
@@ -239,17 +256,9 @@ class PolyClient:
 
         if _debug:
             print(f"   [resolution debug] closed={data.get('closed')} "
-                  f"resolved={data.get('resolved')} active={data.get('active')} "
+                  f"active={data.get('active')} "
                   f"outcomePrices={data.get('outcomePrices')} "
                   f"resolutionResult={data.get('resolutionResult')}")
-
-        # 常にデバッグ出力（調査中）
-        print(f"   [resolution debug] active={data.get('active')} "
-              f"closed={data.get('closed')} "
-              f"resolved={data.get('resolved')} "
-              f"outcomePrices={data.get('outcomePrices')} "
-              f"resolutionResult={data.get('resolutionResult')} "
-              f"question={str(data.get('question',''))[:50]}")
 
         # CLOB /markets/{id} のフィールドで判定
         # active=true のうちは未解決

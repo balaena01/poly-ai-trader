@@ -984,9 +984,33 @@ class Orchestrator:
                         if mid is not None:
                             continue  # orderbook あり = まだ取引中
 
-                    resolution = _pc.get_market_resolution(market_id)
+                    # CLOB API でクローズ状態を確認
+                    market_data = _pc.get_market(market_id)
+                    if not market_data:
+                        continue
+                    if not market_data.get("closed"):
+                        continue  # まだ締め切り前 → 未解決
+
+                    # closed=True → マーケット終了。last trade price で勝敗を判定
+                    pos0 = pos_list[0] if pos_list else None
+                    resolution = None
+                    if pos0:
+                        is_no_side = "no" in pos0.side.lower()
+                        # BUY_NO: token_id はNOトークン。BUY_YES: yes_token_id はYESトークン
+                        check_token = pos0.token_id
+                        last_price = _pc.get_last_trade_price(check_token)
+                        print(f"   [resolution debug] closed=True last_price={last_price} "
+                              f"side={pos0.side} token={check_token[:12]}...")
+                        if last_price is not None:
+                            if is_no_side:
+                                # NOトークン価格: 1.0近い→NO勝ち(resolution=0.0), 0.0近い→YES勝ち(resolution=1.0)
+                                resolution = 1.0 - last_price
+                            else:
+                                # YESトークン価格: 1.0近い→YES勝ち(resolution=1.0)
+                                resolution = last_price
+
                     if resolution is None:
-                        continue  # 未解決 or 取得失敗
+                        continue  # 価格取得失敗 → スキップ
 
                     outcome_str = "YES" if resolution >= 0.5 else "NO"
                     pnl = self.position_tracker.resolve_by_market(market_id, resolution)
