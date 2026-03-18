@@ -988,19 +988,10 @@ class Orchestrator:
                     if resolution is None:
                         continue  # 未解決 or 取得失敗
 
-                    # VOID (outcomePrices=["0","0"]): キャンセル扱い → PnL=0 で強制クローズ
-                    if resolution == -1.0:
-                        outcome_str = "VOID"
-                        for pos in self.position_tracker.get_open_positions():
-                            if pos.market_id == market_id:
-                                self.position_tracker.close_position(pos.id, pos.entry_price, 0.0)
-                        pnl = 0.0
-                    else:
-                        outcome_str = "YES" if resolution >= 0.5 else "NO"
-                        pnl = self.position_tracker.resolve_by_market(market_id, resolution)
+                    outcome_str = "YES" if resolution >= 0.5 else "NO"
+                    pnl = self.position_tracker.resolve_by_market(market_id, resolution)
 
-                    icon = "🏁" if outcome_str != "VOID" else "🚫"
-                    print(f"{icon} マーケット解決: {outcome_str}  PnL ${pnl:+.2f}")
+                    print(f"🏁 マーケット解決: {outcome_str}  PnL ${pnl:+.2f}")
                     self.risk_manager.record_close(market_id, pnl)
                     self.factor_manager.update_pnl_by_market(market_id, pnl)
                     self._log_event("market_resolved", {

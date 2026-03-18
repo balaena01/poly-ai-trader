@@ -251,7 +251,8 @@ class PolyClient:
         if not data.get("closed") and not data.get("resolved"):
             return None
 
-        # outcomePrices: ["1", "0"] → YES, ["0", "1"] → NO, ["0","0"] → VOID (返金)
+        # outcomePrices: ["1", "0"] → YES勝ち, ["0", "1"] → NO勝ち
+        # ["0","0"] は「結果未確定」または「VOID」の両方で使われるため信頼できない → スキップ
         op_raw = data.get("outcomePrices", "[]")
         try:
             op = _json.loads(op_raw) if isinstance(op_raw, str) else op_raw
@@ -261,8 +262,7 @@ class PolyClient:
                     return 1.0
                 elif p1 >= 0.99:
                     return 0.0
-                elif p0 == 0.0 and p1 == 0.0:
-                    return -1.0  # VOID: 特殊値 (-1) でキャンセル扱い
+                # [0,0] は無視 (未確定 or VOID の区別不可)
         except Exception:
             pass
 
