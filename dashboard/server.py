@@ -590,13 +590,13 @@ class DashboardServer:
 
         /* ── Closed Positions ────────────────────── */
         .pos-section-head.closed-head {
-            color: var(--text-secondary);
-            border-bottom: 1px solid var(--border);
+            color: #7a9bbf;
+            border-bottom: 1px solid rgba(122,155,191,0.15);
             margin-top: 4px;
         }
-        .pos-row.closed-win  { border-left: 2px solid var(--emerald); padding-left: 12px; opacity: 0.85; }
-        .pos-row.closed-loss { border-left: 2px solid var(--red);     padding-left: 12px; opacity: 0.85; }
-        .pos-row.closed-flat { border-left: 2px solid var(--border-bright); padding-left: 12px; opacity: 0.75; }
+        .pos-row.closed-win  { border-left: 2px solid var(--emerald); padding-left: 12px; }
+        .pos-row.closed-loss { border-left: 2px solid var(--red);     padding-left: 12px; }
+        .pos-row.closed-flat { border-left: 2px solid var(--border-bright); padding-left: 12px; }
         .resolved-tag {
             font-family: var(--font-mono);
             font-size: 9px;
@@ -605,9 +605,9 @@ class DashboardServer:
             border-radius: 2px;
             letter-spacing: 0.08em;
         }
-        .resolved-tag.yes { background: var(--emerald-dim); border: 1px solid var(--emerald-border); color: var(--emerald); }
-        .resolved-tag.no  { background: var(--red-dim);     border: 1px solid rgba(232,64,96,0.4);    color: var(--red); }
-        .resolved-tag.early { background: var(--bg-elevated); border: 1px solid var(--border-bright); color: var(--text-secondary); }
+        .resolved-tag.yes   { background: var(--emerald-dim); border: 1px solid var(--emerald-border); color: var(--emerald); }
+        .resolved-tag.no    { background: var(--red-dim);     border: 1px solid rgba(232,64,96,0.4);    color: var(--red); }
+        .resolved-tag.early { background: var(--bg-elevated); border: 1px solid var(--border-bright);   color: var(--text-secondary); }
 
         /* ── Signals ─────────────────────────────── */
         .sig-row {
@@ -1130,7 +1130,7 @@ class DashboardServer:
         document.getElementById('closed-positions-badge').textContent =
             positions.length + ' closed  ·  realized ' + pnlStr;
 
-        let html = `<div class="pos-section-head closed-head">⬜ Closed / Resolved <span class="section-count">${positions.length}</span></div>`;
+        let html = `<div class="pos-section-head closed-head">🏁 Resolved <span class="section-count">${positions.length}</span></div>`;
         positions.forEach(p => { html += buildClosedPosRow(p); });
         wrap.innerHTML = html;
     }
@@ -1154,17 +1154,17 @@ class DashboardServer:
         if (pos.status === 'resolved') {
             const exitVal = pos.exit_price;
             if (exitVal >= 0.99) {
-                resolvedTag = '<span class="resolved-tag yes">RESOLVED YES</span>';
+                resolvedTag = '<span class="resolved-tag yes">✓ YES</span>';
                 dispExit = isYes ? '100¢' : '0¢';
             } else if (exitVal <= 0.01) {
-                resolvedTag = '<span class="resolved-tag no">RESOLVED NO</span>';
+                resolvedTag = '<span class="resolved-tag no">✕ NO</span>';
                 dispExit = isYes ? '0¢' : '100¢';
             } else {
-                resolvedTag = '<span class="resolved-tag early">RESOLVED</span>';
+                resolvedTag = '<span class="resolved-tag early">✓ DONE</span>';
                 dispExit = ((isYes ? exitVal : 1 - exitVal) * 100).toFixed(1) + '¢';
             }
         } else {
-            resolvedTag = '<span class="resolved-tag early">CLOSED</span>';
+            resolvedTag = '<span class="resolved-tag early">■ CLOSED</span>';
             const exitVal = pos.exit_price || 0;
             dispExit = ((isYes ? exitVal : 1 - exitVal) * 100).toFixed(1) + '¢';
         }
@@ -1186,7 +1186,7 @@ class DashboardServer:
                     <span class="pos-side ${sideClass}">${sideLabel}</span>
                     <span class="pos-prices">
                         <span>${(dispEntry*100).toFixed(1)}¢</span>
-                        <span class="pos-arrow flat">→</span>
+                        <span class="pos-arrow flat">▶</span>
                         <span>${dispExit}</span>
                     </span>
                     <span class="pos-size">$${(pos.size||0).toFixed(2)}</span>
