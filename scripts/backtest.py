@@ -29,6 +29,8 @@ import httpx
 
 from analyst.features import FeatureExtractor
 from analyst.ml_analyst import MLAnalyst
+from analyst.crypto_features import CryptoFeatureExtractor, is_crypto_market
+from analyst.crypto_ml_analyst import CryptoMLAnalyst
 from analyst.bayesian import BayesianAggregator, SignalSource
 from data_fetcher import PriceHistoryFetcher
 
@@ -109,7 +111,7 @@ class Backtester:
         self.feature_extractor = FeatureExtractor()
         self.aggregator = BayesianAggregator()
 
-        # ML モデル (lgb_model.pkl が存在すれば読み込む)
+        # 汎用 ML モデル (lgb_model.pkl)
         self.ml_analyst: Optional[MLAnalyst] = None
         ml_path = Path(__file__).parent.parent / "models" / "lgb_model.pkl"
         if ml_path.exists():
@@ -119,7 +121,19 @@ class Backtester:
             except Exception as e:
                 print(f"   ⚠️ ML モデル読み込み失敗: {e}")
         else:
-            print("   ℹ️  ML モデルなし (LLM / 市場価格のみで Bayesian 統合)")
+            print("   ℹ️  汎用 ML モデルなし")
+
+        # Crypto ML モデル (lgb_crypto_model.pkl)
+        self.crypto_ml_analyst: Optional[CryptoMLAnalyst] = None
+        self.crypto_feature_extractor = CryptoFeatureExtractor()
+        if CryptoMLAnalyst.is_available():
+            try:
+                self.crypto_ml_analyst = CryptoMLAnalyst()
+                print(f"   🔮 Crypto ML モデル: lgb_crypto_model.pkl")
+            except Exception as e:
+                print(f"   ⚠️ Crypto ML モデル読み込み失敗: {e}")
+        else:
+            print("   ℹ️  Crypto ML モデルなし")
 
         # LLM (--use-llm 時のみ)
         self.llm_analyst = None
@@ -143,6 +157,7 @@ class Backtester:
         print(f"   分析ポイント: 期間の {self.config.analysis_point_pct:.0%} 時点")
         print(f"   LLM         : {'有効' if self.config.use_llm else '無効'}")
         print(f"   ML          : {'有効' if self.ml_analyst else '無効'}")
+        print(f"   Crypto ML   : {'有効' if self.crypto_ml_analyst else '無効'}")
         print("=" * 60 + "\n")
 
         # 1. 解決済みマーケットを取得
@@ -449,9 +464,31 @@ class Backtester:
         """ML + (任意) LLM → Bayesian 統合でシグナルを生成"""
         signals: List[SignalSource] = []
 
-        # ML シグナル
+        # ML シグナル (crypto判定で使用モデルを切り替え)
         ml_prob, ml_conf = 0.5, 0.0
-        if self.ml_analyst:
+        _is_crypto = is_crypto_market(market.question)
+
+        if _is_crypto and self.crypto_ml_analyst and self.crypto_ml_analyst.model:
+            # Crypto ML (36特徴量) — btc_change等はバックテストでは不明なので0
+            crypto_features = self.crypto_feature_extractor.extract(
+                prices=prices,
+                yes_price=yes_price,
+                market_volume=market.volume,
+                market_liquidity=market.liquidity,
+                end_date=market.end_date,
+            )
+            ml_pred = self.crypto_ml_analyst.predict(crypto_features)
+            ml_prob = ml_pred.probability
+            ml_conf = ml_pred.confidence
+            ml_accuracy = 0.5 + 0.22 * ml_conf
+            signals.append(SignalSource(
+                name="CryptoLightGBM",
+                probability=ml_prob,
+                confidence=ml_conf,
+                accuracy=ml_accuracy,
+            ))
+        elif not _is_crypto and self.ml_analyst:
+            # 汎用 ML (28特徴量)
             features = self.feature_extractor.extract(
                 prices=prices,
                 yes_price=yes_price,
@@ -462,7 +499,7 @@ class Backtester:
             ml_pred = self.ml_analyst.predict(features)
             ml_prob = ml_pred.probability
             ml_conf = ml_pred.confidence
-            ml_accuracy = 0.5 + 0.22 * ml_conf  # conf低→accuracy低
+            ml_accuracy = 0.5 + 0.22 * ml_conf
             signals.append(SignalSource(
                 name="LightGBM",
                 probability=ml_prob,
