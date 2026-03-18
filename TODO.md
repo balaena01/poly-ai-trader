@@ -8,6 +8,11 @@
 
 | コミット | 内容 |
 |---|---|
+| `ebc923a` | fix: LLM skill未計測期間 (20件未満) を半Kelly運用に変更 |
+| `95c44f6` | fix: CoinGecko → Binance Public API に切り替え (APIキー不要) |
+| `b59a3a6` | fix: train_crypto_ml.py に CoinGecko BTC/ETH ヒストリカル価格取得を追加 |
+| `43e9c91` | feat: backtest.py に CryptoMLAnalyst 対応を追加 |
+| `112660d` | feat: Crypto専用MLモデル設計・実装 (CryptoFeatures 36特徴量 + 学習スクリプト) |
 | `2e8d41c` | feat: MLをデフォルト無効化 (LLMのみ運用、--use-ml で再有効化可) |
 | `5cba375` | feat: Brier Score / LLM skill_score フィードバックループ実装 |
 | `6fdd155` | feat: ポジション更新を分析ループから独立 (30秒ごと、_positions_loop) |
@@ -292,12 +297,14 @@ python main.py run --live
   effective_llm_prob = market_price + (llm_prob - market_price) * attenuation
   ```
 
-  **③ `risk/risk_manager.py` — Kelly分率の動的調整**
+  **③ `risk/risk_manager.py` — Kelly分率の動的調整** (`ebc923a` で更新)
   ```python
-  if skill_score > 0.10:   kelly_fraction = 0.25   # 通常
-  elif skill_score > 0.0:  kelly_fraction = 0.125  # 半分
+  if skill_score is None:  kelly_fraction = 0.125  # 未計測(20件未満) → 半Kelly
+  elif skill_score > 0.10: kelly_fraction = 0.25   # 通常
+  elif skill_score >= 0.0: kelly_fraction = 0.125  # 半分
   else:                    kelly_fraction = 0.0625 # 1/4（LLM有害期）
   ```
+  - 起動時に即時適用 (orchestrator.__init__ で `update_llm_skill(get_skill_score())` を呼ぶ)
 
   **④ `runner/orchestrator.py` — 呼び出しポイント**
   - LLMシグナル生成後 → `brier_tracker.record_prediction()`
@@ -345,31 +352,21 @@ python main.py run --live
   - 学習時は btc_change_24h 等を None (→ 0) として扱う (ヒストリカルデータなし)
   - 実推論時は orchestrator から btc_change が渡されるため問題なし
 
-- [ ] **Crypto ML 学習: CoinGecko BTC/ETH 価格をヒストリカル取得して特徴量を充実させる**
+- [ ] **Crypto ML: データ品質問題の修正 (棚上げ中)**
 
-  ### 背景・問題
-  初回学習結果:
-  - Train AUC=0.518, Valid AUC=0.618 (21件サンプル、信頼性低い)
-  - **特徴量重要度が `market_volume_24h` のみ、他35特徴量は全て 0.0**
-  - 原因: 学習時に `btc_change_24h / eth_change_24h` を取得する手段がなく全ゼロで学習
-  - 結果: crypto固有の8特徴量が全く機能せず、汎用MLと同等の状態
+  ### 現状
+  - Binance API で BTC/ETH 価格取得は実装済み (`95c44f6`)
+  - 再学習結果: Train AUC=0.505, Valid AUC=0.677 (木1本でearly stopping)
+  - **特徴量重要度が依然 `market_volume_24h` のみ**
+  - 原因: 学習データに非cryptoマーケットが混入している
+    - "Avalanche vs. Jets" (NHLホッケー) が "avalanche" キーワードにマッチ
+    - "Up or Down" 1時間バイナリ (price=0.500 の50/50コインフリップ) が大量混入
+  - モデルファイルは削除済み (`lgb_crypto_model.pkl`)、現在LLMのみで運用中
 
-  ### 対策: CoinGecko API でヒストリカル BTC/ETH 価格を取得
-  - CoinGecko 無料 API: `GET /coins/bitcoin/market_chart?vs_currency=usd&days=365&interval=daily`
-  - 各マーケットの分析時点 (closedTime × 60%) に対応する日足価格を逆引き
-  - `btc_return_24h = (btc_close[t] - btc_close[t-1]) / btc_close[t-1]`
-  - 同様に ETH も取得
-
-  ### 実装場所
-  - `scripts/train_crypto_ml.py` — `fetch_btc_eth_history()` を追加
-    - 学習開始時に BTC/ETH の全期間日足を1回だけ取得してキャッシュ
-    - `collect_training_data()` 内で分析時点の日付に対応する価格変化率を渡す
-  - `analyst/crypto_features.py` は変更不要 (既に受け取り口がある)
-
-  ### 実装後の期待値
-  - crypto固有8特徴量が実データで学習される
-  - BTC上昇局面でYES解決しやすいmarketのパターンを学習できる
-  - AUCが0.65以上になれば実用範囲 (20件以上の backtestで確認)
+  ### 修正が必要な内容 (着手前)
+  1. `is_crypto_market()` のキーワード精度向上 — "Avalanche"→"AVAX"のみ等
+  2. 学習データから "Up or Down" 短期バイナリを除外
+  3. 十分なデータ品質が確認できてから再学習
 
 - [ ] **同一イベントへの集中リスク対策 (相関グループ管理)**
   - 現状: "GTA VI before X?" 系マーケットが複数トリガーに並ぶと実質1ポジション分のリスクになる
