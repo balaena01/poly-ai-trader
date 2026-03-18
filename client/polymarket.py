@@ -206,7 +206,55 @@ class PolyClient:
             return False
     
     # ========== マーケットデータ ==========
-    
+
+    def get_market(self, market_id: str) -> Optional[dict]:
+        """単一マーケットの生データを Gamma API から取得"""
+        import httpx
+        try:
+            resp = httpx.get(f"{GAMMA_API}/markets/{market_id}", timeout=10)
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            return None
+
+    def get_market_resolution(self, market_id: str) -> Optional[float]:
+        """
+        マーケットの解決結果を返す。
+        Returns: 1.0 (YES), 0.0 (NO), None (未解決 or 取得失敗)
+        """
+        import json as _json
+        data = self.get_market(market_id)
+        if not data:
+            return None
+
+        # closed でなければ未解決
+        if not data.get("closed"):
+            return None
+
+        # outcomePrices: ["1", "0"] → YES, ["0", "1"] → NO
+        op_raw = data.get("outcomePrices", "[]")
+        try:
+            op = _json.loads(op_raw) if isinstance(op_raw, str) else op_raw
+            if op and len(op) >= 2:
+                p0, p1 = float(op[0]), float(op[1])
+                if p0 >= 0.99:
+                    return 1.0
+                elif p1 >= 0.99:
+                    return 0.0
+        except Exception:
+            pass
+
+        # resolutionResult / resolution フィールドで判定
+        rs = str(data.get("resolutionResult") or data.get("resolution") or "").strip().upper()
+        if rs in ("1", "YES", "TRUE"):
+            return 1.0
+        if rs in ("0", "NO", "FALSE"):
+            return 0.0
+
+        return None
+
     def get_markets(self, limit: int = 100, active: bool = True) -> List[Market]:
         """
         マーケット一覧を取得

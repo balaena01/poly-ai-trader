@@ -964,53 +964,48 @@ class Orchestrator:
                         print(f"   ⚠️ GTC自動キャンセル失敗: {result.message}")
 
     async def _check_resolved_markets(self):
-        """解決済みマーケットをチェックしてPnL更新"""
+        """解決済みマーケットをチェックしてPnL確定・自動クローズ"""
         open_market_ids = self.position_tracker.get_open_market_ids()
-        
         if not open_market_ids:
             return
-        
+
         try:
-            # Polymarketから解決状態を取得
             from client import PolyClient
-            client = PolyClient()
-            client.connect(read_only=True)
-            
+            _pc = PolyClient()
+
             for market_id in open_market_ids:
                 try:
-                    # マーケット情報取得
-                    market = client.get_market(market_id)
-                    if market and market.get("closed"):
-                        # 解決済み - outcome を確認
-                        # outcome: "YES" or "NO"
-                        outcome = market.get("outcome", "")
-                        if outcome:
-                            resolution = 1.0 if outcome.upper() == "YES" else 0.0
-                            pnl = self.position_tracker.resolve_by_market(market_id, resolution)
-                            if pnl != 0:
-                                print(f"💰 マーケット解決: PnL ${pnl:+.2f}")
-                                self.factor_manager.update_pnl_by_market(market_id, pnl)
-                                self.risk_manager.record_close(market_id, pnl)
-                                self._log_event("market_resolved", {
-                                    "market_id": market_id,
-                                    "outcome": outcome,
-                                    "resolution": resolution,
-                                    "pnl": round(pnl, 4),
-                                })
+                    resolution = _pc.get_market_resolution(market_id)
+                    if resolution is None:
+                        continue  # 未解決 or 取得失敗
 
-                            # 解決カウント更新 → ML再学習トリガー
-                            self._resolved_since_last_training += 1
-                            if (
-                                self.config.auto_retrain
-                                and not self._retraining
-                                and self._resolved_since_last_training >= self.config.retrain_threshold
-                            ):
-                                asyncio.create_task(self._retrain_ml_model())
-                except Exception as e:
-                    continue  # 個別エラーは無視
-                    
-        except Exception as e:
-            pass  # 静かに失敗
+                    outcome_str = "YES" if resolution >= 0.5 else "NO"
+                    pnl = self.position_tracker.resolve_by_market(market_id, resolution)
+
+                    print(f"🏁 マーケット解決: {outcome_str}  PnL ${pnl:+.2f}")
+                    self.risk_manager.record_close(market_id, pnl)
+                    self.factor_manager.update_pnl_by_market(market_id, pnl)
+                    self._log_event("market_resolved", {
+                        "market_id": market_id,
+                        "outcome": outcome_str,
+                        "resolution": resolution,
+                        "pnl": round(pnl, 4),
+                    })
+
+                    # 解決カウント更新 → ML再学習トリガー
+                    self._resolved_since_last_training += 1
+                    if (
+                        self.config.auto_retrain
+                        and not self._retraining
+                        and self._resolved_since_last_training >= self.config.retrain_threshold
+                    ):
+                        asyncio.create_task(self._retrain_ml_model())
+
+                except Exception:
+                    continue
+
+        except Exception:
+            pass
     
     async def _check_position_exits(self, markets: List):
         """利確・損切りをチェック"""
