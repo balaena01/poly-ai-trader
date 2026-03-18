@@ -240,6 +240,55 @@ python main.py run --live
   - JSレンダリング必要なサイトはタイトルのみにフォールバック
   - 変更ファイル: `data_fetcher/news_fetcher.py`, `runner/orchestrator.py`, `requirements.txt`
 
+- [ ] **LLMキャリブレーション追跡 + Brier Scoreフィードバック** ← 次に実装
+
+  ### 背景・動機
+  LLMの確率推定（例:「60%」）は実際に60%の確率で当たる保証がない（過大評価しやすい）。
+  現状はLLMの推定を固定の強さでBayesian統合しているため、LLMが市場より劣っていても
+  そのままKelly計算されて資金を溶かすリスクがある。
+  Brier Scoreで実績を計測し、LLMの精度に応じてシグナル強度・Kellyを動的に調整する。
+
+  ### Brier Score計算式
+  ```
+  brier_llm    = mean((llm_prob - outcome)²)    # LLMの精度
+  brier_market = mean((market_price - outcome)²) # 市場ベースライン
+  skill_score  = 1 - (brier_llm / brier_market)
+    > 0  → LLMが市場より優れている（使う価値あり）
+    = 0  → 互角（市場に勝てていない）
+    < 0  → LLMが市場より劣っている（有害）
+  ```
+
+  ### 実装内容
+
+  **① 新規モジュール: `tracker/brier_tracker.py`**
+  - `record_prediction(market_id, llm_prob, market_price)` — シグナル生成時に記録
+  - `record_outcome(market_id, outcome)` — マーケット解決時に記録
+  - `get_skill_score(window=30) → float` — 直近N件のskill_score
+  - データ永続化: `data/brier_log.json`
+  - サンプル数 < 20 の間は skill_score = None（統計的に意味がないため）
+
+  **② `analyst/bayesian.py` — LLMシグナルの動的減衰**
+  ```python
+  attenuation = clip(skill_score * 2, 0.0, 1.0)  # skill=0.5→100%, skill=0→0%
+  effective_llm_prob = market_price + (llm_prob - market_price) * attenuation
+  ```
+
+  **③ `risk/risk_manager.py` — Kelly分率の動的調整**
+  ```python
+  if skill_score > 0.10:   kelly_fraction = 0.25   # 通常
+  elif skill_score > 0.0:  kelly_fraction = 0.125  # 半分
+  else:                    kelly_fraction = 0.0625 # 1/4（LLM有害期）
+  ```
+
+  **④ `runner/orchestrator.py` — 呼び出しポイント**
+  - LLMシグナル生成後 → `brier_tracker.record_prediction()`
+  - `_check_resolved_markets()` 解決後 → `brier_tracker.record_outcome()`
+  - skill_score を Bayesian・RiskManager に渡す
+  - skill_score < 0 かつ サンプル数 >= 20 → LLMシグナルをブロック（HOLD返却）
+
+  **⑤ ダッシュボード表示**
+  - stats bar に `LLM Skill` を追加（例: `+0.12` なら緑、`-0.05` なら赤）
+
 - [ ] **同一イベントへの集中リスク対策 (相関グループ管理)**
   - 現状: "GTA VI before X?" 系マーケットが複数トリガーに並ぶと実質1ポジション分のリスクになる
   - 対策案: マーケットの `question` からイベントキーワードを抽出し、同一グループへのエクスポージャーをグループ単位で上限管理
