@@ -796,6 +796,9 @@ class Orchestrator:
 
             # 信頼度調整
             adjusted_confidence = audit_result.adjusted_confidence
+            if audit_result.flags:
+                flags_str = ", ".join([f.value for f in audit_result.flags])
+                print(f"   🔍 Audit: {flags_str} → penalty={audit_result.confidence_penalty:.0%} conf={signal.confidence:.0%}→{adjusted_confidence:.0%}")
 
             # 最小条件チェック
             if abs(signal.edge) < self.config.min_edge:
