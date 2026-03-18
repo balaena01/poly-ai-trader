@@ -229,7 +229,7 @@ class PolyClient:
         except Exception:
             return None
 
-    def get_market_resolution(self, market_id: str) -> Optional[float]:
+    def get_market_resolution(self, market_id: str, _debug: bool = False) -> Optional[float]:
         """
         マーケットの解決結果を返す。
         Returns: 1.0 (YES), 0.0 (NO), None (未解決 or 取得失敗)
@@ -237,10 +237,18 @@ class PolyClient:
         import json as _json
         data = self.get_market(market_id)
         if not data:
+            if _debug:
+                print(f"   [resolution debug] market not found: {market_id[:20]}...")
             return None
 
-        # closed でなければ未解決
-        if not data.get("closed"):
+        if _debug:
+            print(f"   [resolution debug] closed={data.get('closed')} "
+                  f"resolved={data.get('resolved')} active={data.get('active')} "
+                  f"outcomePrices={data.get('outcomePrices')} "
+                  f"resolutionResult={data.get('resolutionResult')}")
+
+        # closed または resolved フラグで判定
+        if not data.get("closed") and not data.get("resolved"):
             return None
 
         # outcomePrices: ["1", "0"] → YES, ["0", "1"] → NO

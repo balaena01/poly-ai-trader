@@ -975,7 +975,7 @@ class Orchestrator:
 
             for market_id in open_market_ids:
                 try:
-                    resolution = _pc.get_market_resolution(market_id)
+                    resolution = _pc.get_market_resolution(market_id, _debug=True)
                     if resolution is None:
                         continue  # 未解決 or 取得失敗
 
