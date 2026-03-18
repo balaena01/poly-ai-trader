@@ -913,9 +913,11 @@ class Orchestrator:
                 # 個別取得で区別を試みる
                 order = client.get_order(pos.order_id)
                 status = _order_status(order)
-                if status in ("MATCHED", "FILLED") or status is None:
+                if status in ("MATCHED", "FILLED"):
                     self.position_tracker.mark_order_filled(pos.id)
                     print(f"   ✅ GTC約定確認 (active_ids): {pos.question[:40]}")
+                elif status is None:
+                    pass  # 取得失敗: スキップして次ループで再確認
                 elif status == "CANCELLED":
                     self.position_tracker.remove_position(pos.id)
                     if pos.market_id in self.risk_manager.open_positions:
@@ -927,9 +929,7 @@ class Orchestrator:
             # 個別にステータスを確認 (active_ids が取れなかった場合 or まだLIVE)
             order = client.get_order(pos.order_id)
             if order is None:
-                # 見つからない → 約定済みと判断
-                self.position_tracker.mark_order_filled(pos.id)
-                print(f"   ✅ GTC約定確認 (order not found): {pos.question[:40]}")
+                # 取得失敗 or 不明 → スキップして次ループで再確認
                 continue
 
             order_status = _order_status(order)
