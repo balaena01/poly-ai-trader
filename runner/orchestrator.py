@@ -119,7 +119,8 @@ class OrchestratorConfig:
     dashboard: bool = False
     dashboard_port: int = 8080
 
-    # ML自動再学習
+    # ML
+    use_ml: bool = False                # ML使用 (デフォルトOFF: LLMのみで実績を積む)
     auto_retrain: bool = True           # 自動再学習を有効化
     retrain_threshold: int = 20         # 何マーケット解決ごとに再学習するか
 
@@ -134,8 +135,8 @@ class Orchestrator:
         self.scanner = MarketScanner()
         # ML モデルパス
         ml_model_path = Path(__file__).parent.parent / "models" / "lgb_model.pkl"
-        use_ml = ml_model_path.exists()
-        
+        use_ml = self.config.use_ml and ml_model_path.exists()
+
         # Ensemble Analyst
         self.analyst = EnsembleAnalyst(
             llm_model=self.config.llm_model,
@@ -143,6 +144,8 @@ class Orchestrator:
             use_ml=use_ml,
             use_orderflow=True,  # WebSocket から取引データ収集
         )
+        if not use_ml:
+            print("   ML: 無効 (LLMのみ運用中)")
         self.executor = TradeExecutor(
             dry_run=(self.config.mode == RunMode.DRY_RUN),
             use_risk_manager=False,  # オーケストレーターが一元管理するため無効化
