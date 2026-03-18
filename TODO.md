@@ -230,9 +230,26 @@ python main.py run --live
 
 ## 今後やりたいこと (バックログ)
 
-- [ ] **ML学習の実行** — `pip install lightgbm scikit-learn` → `python scripts/train_ml.py --days 90`
-  - lookahead bias修正・マーケット取得修正済み。初回学習が必要
-  - 学習後に `python scripts/backtest.py --days 90 --limit 100` でバックテスト検証
+- [ ] **MLを一時無効化してLLMのみで運用** ← 次に実装
+
+  ### 判断理由
+  - 予測市場は価格テクニカル特徴量（ボリューム・オーダーブック）ではなくニュースイベントで動くため、
+    LightGBMによる価格パターン学習は予測力を持ちにくい
+  - 各マーケットが全く異なるトピック（スポーツ・政治・crypto）→ 特徴量の意味が市場ごとに変わり汎化しない
+  - データが薄く過学習リスクが高い
+  - 方向対立ガードでMLの悪影響はある程度防げているが、ノイズ増加・設計複雑化のコストが大きい
+  - **方針: まずLLMのみで20件以上解決して実績を積む。その後MLが本当に必要か実データで判断する**
+
+  ### 実装内容
+  - `OrchestratorConfig` に `use_ml: bool = False` を追加（デフォルトOFF）
+  - `EnsembleAnalyst` の `use_ml` を `False` で初期化
+  - `main.py` に `--use-ml` フラグを追加（明示的に有効化したい場合用）
+  - ML関連コード（`ml_analyst.py`, `train_ml.py`, `backtest.py`）は削除せず保持
+  - ログに「ML無効 (LLMのみ運用中)」と表示
+
+  ### 再有効化の条件
+  - LLMのBrier skill_score が 20件以上の実績で確認できた後
+  - MLを追加することで skill_score が改善するか検証してから判断
 
 - [x] **ニュース取得の改善 (Scrapling + DDG検索)** — 対応済み
   - 現状: Google News RSSのタイトルだけをLLMに渡している (内容なし・クエリ精度低い)
