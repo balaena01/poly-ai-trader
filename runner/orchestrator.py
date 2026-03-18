@@ -975,6 +975,15 @@ class Orchestrator:
 
             for market_id in open_market_ids:
                 try:
+                    # orderbook が存在するポジションは取引中 → 解決チェック不要
+                    pos_list = [p for p in self.position_tracker.get_open_positions()
+                                if p.market_id == market_id]
+                    if pos_list:
+                        fetch_tok = pos_list[0].yes_token_id or pos_list[0].token_id
+                        mid = _pc.get_midpoint(fetch_tok)
+                        if mid is not None:
+                            continue  # orderbook あり = まだ取引中
+
                     resolution = _pc.get_market_resolution(market_id)
                     if resolution is None:
                         continue  # 未解決 or 取得失敗

@@ -247,11 +247,7 @@ class PolyClient:
                   f"outcomePrices={data.get('outcomePrices')} "
                   f"resolutionResult={data.get('resolutionResult')}")
 
-        # active=True のマーケットは期限切れでも未解決 → スキップ
-        if data.get("active") is True:
-            return None
-
-        # closed または resolved フラグで判定
+        # closed も resolved もなければ未解決
         if not data.get("closed") and not data.get("resolved"):
             return None
 
