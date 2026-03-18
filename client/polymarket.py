@@ -251,6 +251,11 @@ class PolyClient:
         if not data.get("closed") and not data.get("resolved"):
             return None
 
+        print(f"   [resolution debug] closed={data.get('closed')} resolved={data.get('resolved')} "
+              f"active={data.get('active')} outcomePrices={data.get('outcomePrices')} "
+              f"resolutionResult={data.get('resolutionResult')} "
+              f"question={str(data.get('question',''))[:40]}")
+
         # outcomePrices: ["1", "0"] → YES勝ち, ["0", "1"] → NO勝ち
         # ["0","0"] は「結果未確定」または「VOID」の両方で使われるため信頼できない → スキップ
         op_raw = data.get("outcomePrices", "[]")
