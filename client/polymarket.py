@@ -215,10 +215,14 @@ class PolyClient:
         try:
             resp = httpx.get(f"{HOST}/markets/{market_id}", timeout=10)
             if resp.status_code == 404:
+                print(f"   [market debug] 404: {market_id[:20]}...")
                 return None
             resp.raise_for_status()
-            return resp.json()
-        except Exception:
+            data = resp.json()
+            print(f"   [market debug] got market: question={str(data.get('question',''))[:50]} keys={list(data.keys())[:8]}")
+            return data
+        except Exception as e:
+            print(f"   [market debug] error: {e}")
             return None
 
     def get_market_resolution(self, market_id: str, _debug: bool = False) -> Optional[float]:
@@ -239,16 +243,18 @@ class PolyClient:
                   f"outcomePrices={data.get('outcomePrices')} "
                   f"resolutionResult={data.get('resolutionResult')}")
 
+        # 常にデバッグ出力（調査中）
+        print(f"   [resolution debug] active={data.get('active')} "
+              f"closed={data.get('closed')} "
+              f"resolved={data.get('resolved')} "
+              f"outcomePrices={data.get('outcomePrices')} "
+              f"resolutionResult={data.get('resolutionResult')} "
+              f"question={str(data.get('question',''))[:50]}")
+
         # CLOB /markets/{id} のフィールドで判定
         # active=true のうちは未解決
         if data.get("active") is True:
             return None
-
-        print(f"   [resolution debug] active={data.get('active')} "
-              f"closed={data.get('closed')} "
-              f"outcomePrices={data.get('outcomePrices')} "
-              f"resolutionResult={data.get('resolutionResult')} "
-              f"question={str(data.get('question',''))[:40]}")
 
         # outcomePrices: ["1", "0"] → YES勝ち, ["0", "1"] → NO勝ち
         # ["0","0"] は「結果未確定」または「VOID」の両方で使われるため信頼できない → スキップ
