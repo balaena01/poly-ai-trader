@@ -184,9 +184,9 @@ class EnsembleAnalyst:
             context["eth_change"] = eth_change
         if news_context:
             context["news"] = news_context
-        # prices (1分足) から日足スナップショットを生成 (1440本 = 1日)
-        if prices and len(prices) >= 1440:
-            daily_prices = prices[::1440][-14:]
+        # prices (1時間足) から日足スナップショットを生成 (24本 = 1日)
+        if prices and len(prices) >= 24:
+            daily_prices = prices[::24][-14:]
             n = len(daily_prices)
             from datetime import timedelta
             today = datetime.now()

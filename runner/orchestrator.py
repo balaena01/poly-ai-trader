@@ -714,10 +714,10 @@ class Orchestrator:
                 try:
                     price_points = await self.price_fetcher.fetch_prices(
                         token_id=token_id,
-                        interval="1d",  # 直近1日
-                        fidelity=5,     # 5分足
+                        interval="1w",  # 直近1週間
+                        fidelity=60,    # 1時間足
                     )
-                    prices = [p.price for p in price_points[-100:]]  # 最新100点
+                    prices = [p.price for p in price_points]
                     
                     # 取引履歴 (WebSocketから収集済みのもの)
                     trades = self.trade_cache.get(token_id, [])
