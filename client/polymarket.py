@@ -306,7 +306,9 @@ class PolyClient:
                 result = result.get("mid")
             return float(result) if result is not None else None
         except Exception as e:
-            print(f"中間価格取得エラー: {e}")
+            err_str = str(e)
+            if "404" not in err_str and "No orderbook" not in err_str:
+                print(f"中間価格取得エラー: {e}")
             return None
     
     def get_order_book(self, token_id: str) -> Optional[OrderBook]:

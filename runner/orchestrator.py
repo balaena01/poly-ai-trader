@@ -1443,6 +1443,13 @@ class Orchestrator:
                         # yes_token_id があれば常にYES token で取得 (BUY_NO でも YES価格)
                         fetch_token = pos.yes_token_id or pos.token_id
                         mid_price = _pc.get_midpoint(fetch_token)
+                        if mid_price is None:
+                            # orderbook なし = マーケット解決済みの可能性
+                            if pos.market_id not in getattr(self, '_no_orderbook_warned', set()):
+                                if not hasattr(self, '_no_orderbook_warned'):
+                                    self._no_orderbook_warned = set()
+                                self._no_orderbook_warned.add(pos.market_id)
+                                print(f"   ⚠️ orderbook なし (解決済み?): {pos.question[:50]}")
                         if mid_price is not None:
                             if pos.yes_token_id:
                                 # YES token で取得済み → そのまま YES 価格
