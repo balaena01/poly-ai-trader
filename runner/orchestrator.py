@@ -718,8 +718,13 @@ class Orchestrator:
                 # GTC売り注文発注成功 → PENDING_SELL 状態に移行
                 # 約定確認は _check_pending_gtc_orders で行い、確認後に close_position()
                 sell_order_id = result.order_id or ""
-                self.position_tracker.mark_pending_sell(pos.id, sell_order_id, current_price)
-                print(f"   ⏳ 売り注文発注済み (約定確認待ち): {pos.question[:40]}")
+                if not sell_order_id:
+                    # order_id が取れなかった場合は追跡不可 → 手動フラグ
+                    self.position_tracker.mark_needs_manual_sale(pos.id)
+                    print(f"   ⚠️ order_id 未取得のため手動売却フラグをセット: {pos.question[:40]}")
+                else:
+                    self.position_tracker.mark_pending_sell(pos.id, sell_order_id, current_price)
+                    print(f"   ⏳ 売り注文発注済み (約定確認待ち): {pos.question[:40]}")
             else:
                 msg = result.message or ""
                 if "スキップ" in msg or "not enough" in msg.lower():
