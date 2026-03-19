@@ -199,6 +199,8 @@ class LLMAnalyst:
                 ctx_text += f"\nETH価格: ${context['eth_price']:,.0f}"
             if "eth_change" in context:
                 ctx_text += f" (24h: {context['eth_change']:+.1f}%)"
+            if "price_history" in context:
+                ctx_text += f"\n\n価格推移(日足): {context['price_history']}"
             if "news" in context:
                 ctx_text += f"\n\n関連ニュース:\n{context['news']}"
             if "previous_judgment" in context:

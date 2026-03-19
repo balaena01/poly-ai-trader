@@ -68,7 +68,6 @@ class DashboardServer:
             "exposure": 0,
             "pnl": 0,
             "trades_today": 0,
-            "active_triggers": [],
             "recent_signals": [],
             "recent_trades": [],
             "open_positions": [],
@@ -79,6 +78,7 @@ class DashboardServer:
             "edge_history": [],
             "balance_history": [],
             "llm_skill": None,
+            "brier_stats": {},
         }
         
         self._setup_routes()
@@ -171,40 +171,15 @@ class DashboardServer:
             "timestamp": datetime.now().isoformat(),
         })
     
-    async def push_trigger(self, trigger: dict):
-        """トリガー追加/更新"""
-        triggers = self.state["active_triggers"]
-        found = False
-        for i, t in enumerate(triggers):
-            if t.get("token_id") == trigger.get("token_id"):
-                triggers[i] = trigger
-                found = True
-                break
-        
-        if not found:
-            triggers.append(trigger)
-        
-        self.state["active_triggers"] = triggers
-        
+    async def push_brier_stats(self, stats: dict):
+        """Brier / LLM キャリブレーション統計を更新"""
+        self.state["brier_stats"] = stats
         await self.manager.broadcast({
-            "type": "trigger",
-            "data": trigger,
+            "type": "brier_stats",
+            "data": stats,
             "timestamp": datetime.now().isoformat(),
         })
-    
-    async def remove_trigger(self, token_id: str):
-        """トリガー削除"""
-        self.state["active_triggers"] = [
-            t for t in self.state["active_triggers"]
-            if t.get("token_id") != token_id
-        ]
-        
-        await self.manager.broadcast({
-            "type": "trigger_removed",
-            "token_id": token_id,
-            "timestamp": datetime.now().isoformat(),
-        })
-    
+
     async def push_positions(self, positions: list):
         """オープンポジション一覧を更新"""
         self.state["open_positions"] = positions
@@ -665,38 +640,69 @@ class DashboardServer:
         .edge-strip-fill.up   { background: var(--emerald); }
         .edge-strip-fill.down { background: var(--red); }
 
-        /* ── Triggers ────────────────────────────── */
-        .trig-row {
-            padding: 10px 0;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        /* ── Brier / LLM Calibration ─────────────── */
+        .brier-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 10px;
+            margin-bottom: 14px;
         }
-        .trig-row:last-child { border-bottom: none; }
-        .trig-left { flex: 1; min-width: 0; }
-        .trig-question { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 4px; }
-        .trig-meta { display: flex; gap: 10px; align-items: center; }
-        .trig-side {
+        .brier-kv {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+        .brier-label {
             font-family: var(--font-mono);
             font-size: 9px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--text-dim);
+        }
+        .brier-val {
+            font-family: var(--font-mono);
+            font-size: 18px;
             font-weight: 600;
-            padding: 2px 6px;
+            line-height: 1;
+        }
+        .brier-val.up   { color: var(--emerald); }
+        .brier-val.down { color: var(--red); }
+        .brier-val.flat { color: var(--amber); }
+        .brier-val.dim  { color: var(--text-secondary); }
+        .brier-bar-wrap {
+            margin-top: 12px;
+        }
+        .brier-bar-label {
+            display: flex;
+            justify-content: space-between;
+            font-family: var(--font-mono);
+            font-size: 9px;
+            color: var(--text-dim);
+            margin-bottom: 5px;
+        }
+        .brier-bar {
+            height: 4px;
+            background: var(--bg-elevated);
             border-radius: 2px;
+            overflow: hidden;
         }
-        .trig-side.buy  { background: var(--emerald-dim); border: 1px solid var(--emerald-border); color: var(--emerald); }
-        .trig-side.sell { background: var(--red-dim); border: 1px solid rgba(232,64,96,0.4); color: var(--red); }
-        .trig-price { font-family: var(--font-mono); font-size: 10px; color: var(--amber); }
-        .trig-size  { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
-        .trig-pulse {
-            width: 6px; height: 6px;
-            border-radius: 50%;
-            background: var(--amber);
-            box-shadow: 0 0 5px rgba(240,160,48,0.6);
-            animation: fade-pulse 1.2s ease-in-out infinite;
-            flex-shrink: 0;
+        .brier-bar-fill {
+            height: 100%;
+            border-radius: 2px;
+            transition: width 0.5s ease;
         }
+        .brier-bar-fill.win  { background: var(--emerald); }
+        .brier-bar-fill.loss { background: var(--red); }
+        .brier-record {
+            display: flex;
+            gap: 12px;
+            margin-top: 10px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+        }
+        .brier-wins  { color: var(--emerald); }
+        .brier-losses { color: var(--red); }
+        .brier-total  { color: var(--text-dim); }
 
         /* ── Trades ──────────────────────────────── */
         .trade-row {
@@ -774,9 +780,9 @@ class DashboardServer:
             <div class="stat-tile-sub" id="trades-sub">0 trades</div>
         </div>
         <div class="stat-tile">
-            <div class="stat-tile-label">Triggers</div>
-            <div class="stat-tile-value amber" id="triggers-count">0</div>
-            <div class="stat-tile-sub" id="status-sub">—</div>
+            <div class="stat-tile-label">Pending</div>
+            <div class="stat-tile-value amber" id="pending-count">0</div>
+            <div class="stat-tile-sub" id="status-sub">GTC orders</div>
         </div>
         <div class="stat-tile">
             <div class="stat-tile-label">LLM Skill</div>
@@ -817,13 +823,14 @@ class DashboardServer:
             </div>
         </div>
 
-        <!-- Triggers -->
+        <!-- LLM Calibration -->
         <div class="card">
             <div class="card-head">
-                <span class="card-title">Active Triggers</span>
+                <span class="card-title">LLM Calibration</span>
+                <span class="card-badge" id="brier-badge">—</span>
             </div>
-            <div class="card-body" id="triggers-list">
-                <div class="empty">No active triggers</div>
+            <div class="card-body" id="brier-panel">
+                <div class="empty">Calibrating… (need 20 resolved)</div>
             </div>
         </div>
 
@@ -935,15 +942,14 @@ class DashboardServer:
 
     function handleMessage(msg) {
         switch (msg.type) {
-            case 'init':     initAll(msg.data); break;
-            case 'update':   onUpdate(msg.key, msg.value); break;
-            case 'signal':   prependSignal(msg.data); break;
-            case 'trade':    prependTrade(msg.data); break;
-            case 'trigger':  upsertTrigger(msg.data); break;
-            case 'trigger_removed': removeTrigger(msg.token_id); break;
-            case 'price':    updatePrice(msg.symbol, msg.price); break;
-            case 'positions':        renderPositions(msg.data || []); break;
-        case 'closed_positions': renderClosedPositions(msg.data || []); break;
+            case 'init':            initAll(msg.data); break;
+            case 'update':          onUpdate(msg.key, msg.value); break;
+            case 'signal':          prependSignal(msg.data); break;
+            case 'trade':           prependTrade(msg.data); break;
+            case 'price':           updatePrice(msg.symbol, msg.price); break;
+            case 'positions':       renderPositions(msg.data || []); break;
+            case 'closed_positions':renderClosedPositions(msg.data || []); break;
+            case 'brier_stats':     renderBrierStats(msg.data || {}); break;
         }
     }
 
@@ -951,19 +957,17 @@ class DashboardServer:
         setBalance(s.balance, s.exposure || 0);
         setPortfolio(s.portfolio || 0);
         setUnrealizedPnl(s.unrealized_pnl || 0, s.pnl || 0);
-        document.getElementById('triggers-count').textContent = s.active_triggers.length;
         document.getElementById('trades-sub').textContent = (s.trades_today || 0) + ' trades';
         if (s.prices.BTC) updatePrice('BTC', s.prices.BTC);
         if (s.prices.ETH) updatePrice('ETH', s.prices.ETH);
         const b = document.getElementById('status-badge');
         b.textContent = s.status.toUpperCase();
         b.className = 'sys-status ' + s.status;
-        document.getElementById('status-sub').textContent = s.status;
         renderSignals(s.recent_signals || []);
-        renderTriggers(s.active_triggers || []);
         renderPositions(s.open_positions || []);
         renderClosedPositions(s.closed_positions || []);
         renderTrades(s.recent_trades || []);
+        renderBrierStats(s.brier_stats || {});
         setLlmSkill(s.llm_skill ?? null);
         (s.edge_history || []).forEach(e => addEdgePoint(e.edge));
         (s.balance_history || []).forEach(b => addBalancePoint(b.balance, b.pnl));
@@ -992,9 +996,10 @@ class DashboardServer:
         } else if (key === 'status') {
             const b = document.getElementById('status-badge');
             b.textContent = val.toUpperCase(); b.className = 'sys-status ' + val;
-            document.getElementById('status-sub').textContent = val;
         } else if (key === 'llm_skill') {
             setLlmSkill(val);
+        } else if (key === 'brier_stats') {
+            renderBrierStats(val || {});
         }
     }
 
@@ -1055,6 +1060,7 @@ class DashboardServer:
 
         const pending = positions.filter(p => p.order_filled === false);
         const active  = positions.filter(p => p.order_filled !== false);
+        document.getElementById('pending-count').textContent = pending.length;
         const totalPnl = active.reduce((s, p) => s + (p.unrealized_pnl || 0), 0);
         const pnlStr = (totalPnl >= 0 ? '+' : '') + '$' + totalPnl.toFixed(2);
 
@@ -1267,38 +1273,61 @@ class DashboardServer:
         return div;
     }
 
-    // ── Triggers ─────────────────────────────────
-    function renderTriggers(triggers) {
-        const el = document.getElementById('triggers-list');
-        if (!triggers.length) { el.innerHTML = '<div class="empty">No active triggers</div>'; return; }
-        el.innerHTML = '';
-        triggers.forEach(t => upsertTrigger(t));
-    }
-    function upsertTrigger(t) {
-        const list = document.getElementById('triggers-list');
-        if (list.querySelector('.empty')) list.innerHTML = '';
-        let el = list.querySelector(`[data-token="${t.token_id}"]`);
-        if (!el) { el = document.createElement('div'); el.className = 'trig-row'; el.dataset.token = t.token_id; list.appendChild(el); }
-        const side = (t.side||'buy').toLowerCase();
-        const sCls = side.includes('sell') ? 'sell' : 'buy';
-        el.innerHTML = `
-            <div class="trig-left">
-                <div class="trig-question">${t.question||'Unknown'}</div>
-                <div class="trig-meta">
-                    <span class="trig-side ${sCls}">${t.side||'BUY'}</span>
-                    <span class="trig-price">@ ${(t.target_price||0).toFixed(4)}</span>
-                    <span class="trig-size">$${(t.size||0).toFixed(2)}</span>
+    // ── Brier / LLM Calibration ──────────────────
+    function renderBrierStats(s) {
+        const panel = document.getElementById('brier-panel');
+        const badge = document.getElementById('brier-badge');
+        const total = s.total_predictions || 0;
+
+        if (!total || total < 20) {
+            const need = Math.max(0, 20 - total);
+            panel.innerHTML = `<div class="empty">Calibrating… (${total}/20 resolved)</div>`;
+            badge.textContent = total > 0 ? total + ' resolved' : '—';
+            return;
+        }
+
+        const skill   = s.skill_score != null ? s.skill_score : null;
+        const bLlm    = s.brier_llm   != null ? s.brier_llm   : null;
+        const bMkt    = s.brier_market != null ? s.brier_market : null;
+        const wins    = s.wins   || 0;
+        const losses  = s.losses || 0;
+        const acc     = total > 0 ? (wins / total) : 0;
+
+        const skillCls = skill == null ? 'dim' : skill > 0.10 ? 'up' : skill >= 0 ? 'flat' : 'down';
+        const skillStr = skill == null ? '—' : (skill >= 0 ? '+' : '') + (skill * 100).toFixed(1) + '%';
+
+        const accW = (acc * 100).toFixed(0);
+
+        badge.textContent = total + ' resolved';
+
+        panel.innerHTML = `
+            <div class="brier-grid">
+                <div class="brier-kv">
+                    <span class="brier-label">Skill Score</span>
+                    <span class="brier-val ${skillCls}">${skillStr}</span>
+                </div>
+                <div class="brier-kv">
+                    <span class="brier-label">Win Rate</span>
+                    <span class="brier-val ${acc >= 0.5 ? 'up' : 'down'}">${accW}%</span>
+                </div>
+                <div class="brier-kv">
+                    <span class="brier-label">Brier LLM</span>
+                    <span class="brier-val dim">${bLlm != null ? bLlm.toFixed(3) : '—'}</span>
+                </div>
+                <div class="brier-kv">
+                    <span class="brier-label">Brier Mkt</span>
+                    <span class="brier-val dim">${bMkt != null ? bMkt.toFixed(3) : '—'}</span>
                 </div>
             </div>
-            <div class="trig-pulse"></div>`;
-        document.getElementById('triggers-count').textContent = list.querySelectorAll('.trig-row').length;
-    }
-    function removeTrigger(tokenId) {
-        const el = document.querySelector(`[data-token="${tokenId}"]`);
-        if (el) el.remove();
-        const list = document.getElementById('triggers-list');
-        if (!list.querySelectorAll('.trig-row').length) list.innerHTML = '<div class="empty">No active triggers</div>';
-        document.getElementById('triggers-count').textContent = list.querySelectorAll('.trig-row').length;
+            <div class="brier-bar-wrap">
+                <div class="brier-bar-label">
+                    <span class="brier-wins">✓ ${wins} wins</span>
+                    <span class="brier-losses">${losses} losses ✗</span>
+                </div>
+                <div class="brier-bar">
+                    <div class="brier-bar-fill win" style="width:${accW}%"></div>
+                </div>
+            </div>`;
     }
 
     // ── Trades ───────────────────────────────────

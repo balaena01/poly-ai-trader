@@ -120,10 +120,28 @@ class BrierTracker:
             if r.get("outcome") is not None
         ]
         skill = self.get_skill_score()
+
+        wins = losses = 0
+        brier_llm = brier_market = None
+        if resolved:
+            brier_llm = sum((r["llm_prob"] - r["outcome"]) ** 2 for r in resolved) / len(resolved)
+            brier_market = sum((r["market_price"] - r["outcome"]) ** 2 for r in resolved) / len(resolved)
+            for r in resolved:
+                pred_yes = r["llm_prob"] >= 0.5
+                actual_yes = r["outcome"] >= 0.5
+                if pred_yes == actual_yes:
+                    wins += 1
+                else:
+                    losses += 1
+
         return {
-            "total_predictions": len(self._records),
+            "total_predictions": len(resolved),
             "resolved": len(resolved),
             "skill_score": skill,
             "min_sample": self.MIN_SAMPLE,
             "calibrated": len(resolved) >= self.MIN_SAMPLE,
+            "wins": wins,
+            "losses": losses,
+            "brier_llm": round(brier_llm, 4) if brier_llm is not None else None,
+            "brier_market": round(brier_market, 4) if brier_market is not None else None,
         }

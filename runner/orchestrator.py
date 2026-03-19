@@ -406,6 +406,7 @@ class Orchestrator:
                 self.risk_manager.update_llm_skill(skill_score)
                 if self.dashboard:
                     await self.dashboard.update_state("llm_skill", skill_score)
+                    await self.dashboard.push_brier_stats(self.brier_tracker.get_stats())
 
                 # 各マーケットを分析 (エクスポージャー上限はRiskManagerが管理)
                 for market in markets:
