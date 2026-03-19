@@ -298,10 +298,14 @@ class PositionTracker:
         exit_signals = []
         
         for pos in self.get_open_positions():
+            if pos.needs_manual_sale:
+                continue  # 手動売却フラグ付き = システムクローズ不可 → スキップ
+            if pos.pending_sell_order_id:
+                continue  # 売り注文約定待ち中 → 再発注しない
             yes_price = current_prices.get(pos.market_id)
             if yes_price is None:
                 continue
-            
+
             pnl_pct = pos.get_unrealized_pnl_pct(yes_price)
             
             # 利確チェック

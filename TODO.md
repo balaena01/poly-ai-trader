@@ -8,7 +8,8 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: 売却時に実トークン残高を取得してsellサイズを補正 (部分約定対応) |
+| (最新) | fix: exit_signals ループの堅牢性改善 (needs_manual_sale スキップ + 各イテレーションのtry/except) |
+| `prev` | fix: 売却時に実トークン残高を取得してsellサイズを補正 (部分約定対応) |
 | `18c9536` | fix: GTC売り注文を即CLOSEDにせずPENDING_SELL状態で約定確認後にCLOSED |
 | `5093cf3` | feat: 手動売却アラートの解除ボタン実装 (2クリック確認 + dismiss_manual_sale API) |
 | `0838cf6` | feat: LLMにスポーツ市場判定 (is_sport) を追加し二重チェックを実装 |

@@ -1216,7 +1216,10 @@ class Orchestrator:
                         print(f"   ⏸️ 利確スキップ (解決まで{days_left:.1f}日 ≤ {self.config.take_profit_min_days}日、HOLD継続)")
                         continue
 
-            await self._exit_position(pos, reason, yes_price)
+            try:
+                await self._exit_position(pos, reason, yes_price)
+            except Exception as e:
+                print(f"   ❌ _exit_position エラー (継続): {e}")
     
     def _get_analysis_interval(self, markets: List) -> int:
         """分析間隔を決定 (分)"""
