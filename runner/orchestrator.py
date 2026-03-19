@@ -75,43 +75,6 @@ def _order_status(order) -> Optional[str]:
     return getattr(order, "status", None)
 
 
-@dataclass
-class TriggerCondition:
-    """売買トリガー条件"""
-    market_id: str
-    token_id: str           # 実際に売買するトークン (BUY_NO なら NO token)
-    watch_token_id: str     # 価格監視用トークン (常に YES token)
-    question: str
-    side: str  # "BUY_YES" / "BUY_NO" / "SELL_YES" / "SELL_NO"
-    target_price: float  # この価格条件で発火 (YES価格ベース)
-    size: float
-    signal_confidence: float
-    signal_probability: float = 0.5  # シグナル生成時のモデル確率推定 (発火時エッジ再検証用)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    expires_at: Optional[datetime] = None
-
-    def is_expired(self) -> bool:
-        if not self.expires_at:
-            return False
-        return datetime.now(timezone.utc) > self.expires_at
-    
-    def should_execute(self, current_price: float) -> bool:
-        if self.is_expired():
-            return False
-        # BUY_YES: YES価格が下がったら買い
-        # BUY_NO: YES価格が上がったら買い (NO が安くなる)
-        # SELL_YES: YES価格が上がったら売り
-        # SELL_NO: YES価格が下がったら売り
-        side = self.side.upper()
-        if side == "BUY_YES":
-            return current_price <= self.target_price
-        elif side == "BUY_NO":
-            return current_price >= self.target_price
-        elif side == "SELL_YES":
-            return current_price >= self.target_price
-        else:  # SELL_NO
-            return current_price <= self.target_price
-
 
 @dataclass
 class OrchestratorConfig:
@@ -129,8 +92,7 @@ class OrchestratorConfig:
     # 実行
     mode: RunMode = RunMode.DRY_RUN
     max_trades_per_cycle: int = 3
-    trigger_expiry_minutes: int = 30
-    
+
     # リスク
     max_position_pct: float = 0.10
     max_drawdown_pct: float = 0.15
@@ -208,8 +170,6 @@ class Orchestrator:
         # WebSocket
         self.websocket: Optional[PolyWebSocket] = None
         
-        # トリガー管理
-        self.active_triggers: Dict[str, TriggerCondition] = {}
         # 再起動後もポジション重複を防ぐため、既存のオープンポジションを読み込む
         self.executed_markets: Set[str] = set(self.position_tracker.get_open_market_ids())
         
@@ -228,9 +188,6 @@ class Orchestrator:
         _log_dir = Path(__file__).parent.parent / "data"
         _log_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = _log_dir / "trade_log.jsonl"
-
-        # サイクルごとのトリガー設定数 (max_trades_per_cycle 上限管理)
-        self._triggers_this_cycle: int = 0
 
         # 統計
         self.stats = {
@@ -384,11 +341,7 @@ class Orchestrator:
         print(f"📡 WebSocket接続中... ({len(token_ids)} トークン)")
         
         self.websocket = PolyWebSocket()
-        
-        # 価格更新コールバック
-        async def on_price(update):
-            await self._check_triggers(update.asset_id, update.price)
-        
+
         # 取引コールバック (Orderflow用)
         async def on_trade(update):
             token_id = update.asset_id
@@ -409,7 +362,6 @@ class Orchestrator:
             if len(self.trade_cache[token_id]) > 1000:
                 self.trade_cache[token_id] = self.trade_cache[token_id][-1000:]
         
-        self.websocket.on_price(on_price)
         self.websocket.on_trade(on_trade)
         
         # 接続
@@ -417,162 +369,6 @@ class Orchestrator:
             await self.websocket.connect(token_ids)
         except Exception as e:
             print(f"❌ WebSocketエラー: {e}")
-    
-    async def _check_triggers(self, token_id: str, price: float):
-        """トリガー条件チェック"""
-        trigger = self.active_triggers.get(token_id)
-        
-        if not trigger:
-            return
-        
-        if trigger.should_execute(price):
-            print(f"\n⚡ トリガー発火!")
-            print(f"   {trigger.question[:40]}")
-            print(f"   価格: {price:.4f} (条件: {trigger.target_price:.4f})")
-            
-            await self._execute_trigger(trigger, price)
-    
-    async def _execute_trigger(self, trigger: TriggerCondition, price: float):
-        """トリガー実行"""
-        # 既に実行済みならスキップ
-        if trigger.market_id in self.executed_markets:
-            return
-
-        # ─── 発火時エッジ再検証 ────────────────────────────────────────────
-        # シグナル生成後に相場が動いてエッジが消滅していないかをチェック。
-        # BUY_YES: モデルが YES を過小評価と判断 → edge = signal_prob - current_price
-        # BUY_NO : モデルが NO を過小評価と判断 → edge = current_price - signal_prob
-        #           (YES が高い = NO が安い ほどエッジが大きい)
-        # SELL系 : ポジション決済なので常に通す
-        if trigger.side.upper() in ("BUY_YES", "BUY_NO"):
-            if trigger.side.upper() == "BUY_YES":
-                current_edge = trigger.signal_probability - price
-            else:
-                current_edge = price - trigger.signal_probability
-
-            min_viable_edge = self.config.min_edge * 0.5  # シグナル閾値の50%まで許容
-            print(f"   🔎 エッジ再検証: {trigger.side} signal_prob={trigger.signal_probability:.4f} "
-                  f"price={price:.4f} edge={current_edge:+.3f} (閾値>{min_viable_edge:.3f})")
-            if current_edge < min_viable_edge:
-                print(f"   ⚪ 発火キャンセル: エッジ消滅 (現在エッジ {current_edge:+.1%} < 閾値 {min_viable_edge:.1%})")
-                self._log_event("trigger_cancelled", {
-                    "market_id": trigger.market_id,
-                    "question": trigger.question[:60],
-                    "side": trigger.side,
-                    "signal_probability": round(trigger.signal_probability, 6),
-                    "current_price": round(price, 6),
-                    "current_edge": round(current_edge, 6),
-                    "min_viable_edge": round(min_viable_edge, 6),
-                })
-                del self.active_triggers[trigger.watch_token_id]
-                self.risk_manager.remove_pending_exposure(trigger.size)
-                return
-        # ─────────────────────────────────────────────────────────────────────
-
-        try:
-            # 実行
-            result = await self.executor.execute_order(
-                market_id=trigger.market_id,
-                token_id=trigger.token_id,
-                side=trigger.side,
-                size=trigger.size,
-                price=price,
-            )
-            
-            self.stats["trades_executed"] += 1
-            
-            if result.success:
-                self.stats["trades_success"] += 1
-                print(f"   ✅ 約定: {result.message}")
-                self.executed_markets.add(trigger.market_id)
-
-                # 約定ログ (スリッページ = 発火価格 - シグナル時価格)
-                slippage = price - trigger.target_price
-                time_to_fire = (
-                    datetime.now(timezone.utc) - trigger.created_at
-                ).total_seconds()
-                self._log_event("trigger_fired", {
-                    "market_id": trigger.market_id,
-                    "question": trigger.question[:60],
-                    "side": trigger.side,
-                    "target_price": round(trigger.target_price, 6),
-                    "executed_price": round(price, 6),
-                    "slippage": round(slippage, 6),
-                    "slippage_pct": round(slippage / trigger.target_price, 6) if trigger.target_price else 0,
-                    "size": round(trigger.size, 2),
-                    "time_to_fire_sec": round(time_to_fire, 1),
-                    "success": True,
-                })
-                
-                # エクスポージャー: ペンディング → オープン
-                self.risk_manager.convert_pending_to_open(
-                    trigger.market_id, trigger.size, trigger.question[:30]
-                )
-                
-                # 実際の約定価格 (CLOB ask/bid に更新済みの場合はそちらを使う)
-                # position_tracker は entry_price を常に YES価格として扱う。
-                # execute() は BUY_NO の executed_price を NO価格で返すので YES換算する。
-                entry_price = result.executed_price if result.executed_price is not None else price
-                if "NO" in trigger.side.upper() and result.executed_price is not None:
-                    entry_price = 1.0 - result.executed_price  # NO価格 → YES換算
-
-                # ポジション記録 (GTC注文はorder_id保存・未約定フラグ付き)
-                self.position_tracker.record_trade(
-                    market_id=trigger.market_id,
-                    token_id=trigger.token_id,
-                    yes_token_id=trigger.watch_token_id,  # 常にYES token (価格表示用)
-                    question=trigger.question,
-                    side=trigger.side,
-                    entry_price=entry_price,
-                    size=trigger.size,
-                    order_id=result.order_id,
-                    order_filled=False,  # GTC: 注文受理=未約定、後続チェックで確認
-                )
-
-                # ファクター記録 (アクティブファクターがあれば)
-                active_factors = self.factor_manager.get_active_factors()
-                if active_factors:
-                    factor = active_factors[0]
-                    self.factor_manager.record_trade(
-                        factor_id=factor.hypothesis.id,
-                        pnl=0,           # 解決後に update_pnl_by_market() で更新
-                        entry_price=entry_price,
-                        market_id=trigger.market_id,
-                    )
-
-                # 50トレードごとに新ファクターを生成 (学習層)
-                if self.stats["trades_success"] % 50 == 0:
-                    asyncio.create_task(self._mine_new_factor())
-            else:
-                print(f"   ❌ 失敗: {result.message}")
-                self._log_event("trigger_fired", {
-                    "market_id": trigger.market_id,
-                    "question": trigger.question[:60],
-                    "side": trigger.side,
-                    "executed_price": round(price, 6),
-                    "size": round(trigger.size, 2),
-                    "success": False,
-                    "error": result.message,
-                })
-                # 失敗時はペンディングを解放
-                self.risk_manager.remove_pending_exposure(trigger.size)
-            
-            # ダッシュボード更新
-            if self.dashboard:
-                await self.dashboard.push_trade({
-                    "question": trigger.question[:50],
-                    "side": trigger.side,
-                    "price": price,
-                    "size": trigger.size,
-                    "success": result.success,
-                })
-                await self.dashboard.remove_trigger(trigger.watch_token_id)
-            
-            # トリガー削除 (watch_token_id で管理)
-            del self.active_triggers[trigger.watch_token_id]
-            
-        except Exception as e:
-            print(f"   ❌ 実行エラー: {e}")
     
     # ========== 分析ループ ==========
     
@@ -611,7 +407,6 @@ class Orchestrator:
                     await self.dashboard.update_state("llm_skill", skill_score)
 
                 # 各マーケットを分析 (エクスポージャー上限はRiskManagerが管理)
-                self._triggers_this_cycle = 0
                 for market in markets:
                     if not self._running:
                         break
@@ -630,9 +425,6 @@ class Orchestrator:
                 if self.dashboard:
                     await self._push_positions_to_dashboard(markets)
 
-                # 期限切れトリガーをクリーンアップ
-                await self._cleanup_expired_triggers()
-                
                 # ダッシュボードにPnL更新
                 if self.dashboard:
                     stats = self.position_tracker.get_stats()
@@ -652,14 +444,23 @@ class Orchestrator:
     
     async def _analyze_market(self, market):
         """単一マーケット分析"""
-        # 既に実行済みならスキップ
+        # 既に実行済みならスキップ (PENDINGはエッジ再検証のため通過)
         market_id = getattr(market, 'market_id', None) or getattr(market, 'condition_id', str(id(market)))
         if market_id in self.executed_markets:
-            return
-        
-        # 既存トリガーをチェック (後で比較用)
+            pending_check = next(
+                (p for p in self.position_tracker.get_pending_positions() if p.market_id == market_id),
+                None,
+            )
+            if not pending_check:
+                return  # FILLED/CLOSED → スキップ
+            # PENDING → fall through for edge re-verification
+
         token_id = getattr(market, 'yes_token_id', None)
-        existing_trigger = self.active_triggers.get(token_id) if token_id else None
+        # PENDING GTC注文があれば取得 (再分析でエッジ消失時にキャンセルするため)
+        pending_pos = next(
+            (p for p in self.position_tracker.get_pending_positions() if p.market_id == market_id),
+            None,
+        )
         
         question = getattr(market, 'question', str(market))
 
@@ -681,8 +482,8 @@ class Orchestrator:
             print(f"   ⏭️ スキップ (期限 {days_left:.1f}日): {question[:40]}")
             return
 
-        # エクスポージャー上限チェック (既存トリガーがない新規マーケットはLLM分析をスキップ)
-        if not existing_trigger:
+        # エクスポージャー上限チェック (PENDINGなし=新規。PENDINGありは再検証のため継続)
+        if not pending_pos:
             if not self.risk_manager.can_add_position(self.risk_manager.min_position * 3):
                 exposure_ratio = self.risk_manager.get_exposure_ratio()
                 print(f"   ⏭️ スキップ (エクスポージャー上限 {exposure_ratio:.0%}/{self.risk_manager.max_total_exposure:.0%}): {question[:40]}")
@@ -803,22 +604,17 @@ class Orchestrator:
             # 最小条件チェック
             if abs(signal.edge) < self.config.min_edge:
                 print(f"   ⚪ エッジ不足 ({signal.edge:.1%}, 閾値: ±{self.config.min_edge:.0%})")
-                if existing_trigger:
-                    print(f"   🗑️ 既存トリガーキャンセル (エッジ消滅): {existing_trigger.side}")
-                    self.risk_manager.remove_pending_exposure(existing_trigger.size)
-                    del self.active_triggers[existing_trigger.watch_token_id]
+                if pending_pos:
+                    await self._cancel_pending_order(pending_pos, "エッジ消滅")
                 return
 
             if adjusted_confidence < self.config.min_confidence:
                 print(f"   ⚪ 信頼度不足 ({adjusted_confidence:.0%})")
-                # 方向が逆転していたらキャンセル、同方向なら維持
-                if existing_trigger:
-                    if existing_trigger.side != signal.action.value:
-                        print(f"   🗑️ 既存トリガーキャンセル (方向逆転): {existing_trigger.side} → {signal.action.value}")
-                        self.risk_manager.remove_pending_exposure(existing_trigger.size)
-                        del self.active_triggers[existing_trigger.watch_token_id]
+                if pending_pos:
+                    if pending_pos.side != signal.action.value:
+                        await self._cancel_pending_order(pending_pos, f"方向逆転: {pending_pos.side} → {signal.action.value}")
                     else:
-                        print(f"   ⏸️ 既存トリガー維持中: {existing_trigger.side} @ {existing_trigger.target_price:.4f}")
+                        print(f"   ⏸️ PENDING維持: {pending_pos.side}")
                 return
             
             # シグナルをログ
@@ -841,54 +637,61 @@ class Orchestrator:
             )
             size = position_result.amount
             
-            # トリガー設定
-            await self._set_trigger(market, signal, size)
+            # 即時発注
+            await self._execute_order(market, signal, size, pending_pos)
             
         except Exception as e:
             print(f"   ❌ エラー: {e}")
-    
-    async def _set_trigger(self, market, signal, size: float):
-        """トリガー条件を設定"""
+
+    async def _cancel_pending_order(self, pos, reason: str):
+        """PENDING GTC注文をキャンセル"""
+        print(f"   🗑️ PENDING注文キャンセル ({reason}): {pos.question[:40]}")
+        if pos.order_id:
+            try:
+                from client import PolyClient
+                client = PolyClient()
+                client.connect()
+                result = client.cancel_order(pos.order_id)
+                if result.success:
+                    print(f"   ✅ キャンセル成功: {pos.order_id[:16]}...")
+                else:
+                    print(f"   ⚠️ キャンセル失敗: {result.message}")
+            except Exception as e:
+                print(f"   ⚠️ キャンセルエラー: {e}")
+        self.position_tracker.remove_position(pos.id)
+        if pos.market_id in self.risk_manager.open_positions:
+            del self.risk_manager.open_positions[pos.market_id]
+        self.executed_markets.discard(pos.market_id)
+        self._log_event("order_cancelled", {
+            "market_id": pos.market_id,
+            "question": pos.question[:60],
+            "side": pos.side,
+            "reason": reason,
+        })
+
+    async def _execute_order(self, market, signal, size: float, pending_pos=None):
+        """GTC注文を即時発注"""
         # BUY_YES/SELL_YES は YES token、BUY_NO/SELL_NO は NO token
         if signal.action.value.upper() in ("BUY_YES", "SELL_YES"):
             token_id = getattr(market, 'yes_token_id', None)
         else:
             token_id = getattr(market, 'no_token_id', None) or getattr(market, 'yes_token_id', None)
-        
-        # 価格監視用のYESトークンID (常にYES価格で判定)
-        watch_token_id = getattr(market, 'yes_token_id', None)
-        if not watch_token_id:
+
+        yes_token_id = getattr(market, 'yes_token_id', None)
+        if not yes_token_id:
             return
-        
+
         market_id = getattr(market, 'market_id', None) or getattr(market, 'condition_id', str(id(market)))
         question = getattr(market, 'question', str(market))
-
-        # 既存トリガーをチェック (watch_token_id で管理)
-        existing_trigger = self.active_triggers.get(watch_token_id)
-        if existing_trigger:
-            # 同じ方向なら維持
-            if existing_trigger.side == signal.action.value:
-                print(f"   ⏸️ トリガー維持中: {existing_trigger.side}")
-                return
-            
-            # 反対方向 → 古いトリガーを削除
-            print(f"   🔄 予測反転: {existing_trigger.side} → {signal.action.value}")
-            self.risk_manager.remove_pending_exposure(existing_trigger.size)
-            del self.active_triggers[watch_token_id]
-        
-        # 目標価格: 現在価格をそのまま使用
-        # Polymarketはイベントドリブン。待機中にエッジが消えるリスクが高いため
-        # 1%オフセットは設けず、シグナル生成時点の価格で即時発火を狙う
         current_price = getattr(market, 'yes_price', 0.5)
-        target_price = current_price
-        
-        # トリガー有効期限: 分析間隔の1.5倍 (最低 trigger_expiry_minutes)
-        # 解決まで7日あるマーケットは分析間隔が240分 → 期限360分にする
-        _analysis_interval_min = self._get_analysis_interval([market])
-        _trigger_expiry_minutes = max(
-            self.config.trigger_expiry_minutes,
-            int(_analysis_interval_min * 1.5),
-        )
+
+        # 同方向のPENDINGがあれば維持
+        if pending_pos:
+            if pending_pos.side == signal.action.value:
+                print(f"   ⏸️ PENDING維持: {pending_pos.side} @ {pending_pos.entry_price:.4f}")
+                return
+            # 反対方向 → キャンセルして再発注
+            await self._cancel_pending_order(pending_pos, f"方向逆転: {pending_pos.side} → {signal.action.value}")
 
         # 最小注文サイズチェック (Polymarket 最小: 5 tokens)
         POLY_MIN_TOKENS = 5.0
@@ -902,54 +705,91 @@ class Orchestrator:
             exposure_ratio = self.risk_manager.get_exposure_ratio()
             print(f"   ⚠️ エクスポージャー上限 ({exposure_ratio:.0%} / {self.risk_manager.max_total_exposure:.0%})")
             return
-        
-        trigger = TriggerCondition(
-            market_id=market_id,
-            token_id=token_id,           # 実際に売買するトークン
-            watch_token_id=watch_token_id,  # 価格監視用 (YES token)
-            question=question,
-            side=signal.action.value,
-            target_price=target_price,
-            size=size,
-            signal_confidence=signal.confidence,
-            signal_probability=signal.final_probability,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=_trigger_expiry_minutes),
-        )
-        
-        # YES token で監視 (WebSocket は YES 価格を送ってくる)
-        self.active_triggers[watch_token_id] = trigger
 
-        # LLM判断をキャッシュ (次サイクルのエッジ再検証時に使用)
-        self._save_llm_judgment(token_id, signal)
+        print(f"   🚀 即時発注: {signal.action.value} @ {current_price:.4f} ${size:.2f}")
 
-        # ペンディングエクスポージャーに追加
-        self.risk_manager.add_pending_exposure(size)
-
-        # サイクル内トリガー数をカウント
-        self._triggers_this_cycle += 1
-
-        self._log_event("trigger_set", {
+        self._log_event("order_placed", {
             "market_id": market_id,
             "question": question[:60],
             "side": signal.action.value,
-            "target_price": round(target_price, 6),
+            "price": round(current_price, 6),
             "size": round(size, 2),
-            "expiry_minutes": _trigger_expiry_minutes,
         })
 
-        print(f"   ⏰ トリガー設定: {signal.action.value} @ {target_price:.4f}")
-        print(f"      サイズ: ${size:.2f} | 有効期限: {_trigger_expiry_minutes}分")
-        
-        # ダッシュボード更新
-        if self.dashboard:
-            await self.dashboard.push_trigger({
-                "token_id": token_id,
-                "question": question[:50],
-                "side": signal.action.value,
-                "target_price": target_price,
-                "size": size,
-            })
-    
+        try:
+            result = await self.executor.execute_order(
+                market_id=market_id,
+                token_id=token_id,
+                side=signal.action.value,
+                size=size,
+                price=current_price,
+            )
+
+            self.stats["trades_executed"] += 1
+
+            if result.success:
+                self.stats["trades_success"] += 1
+                print(f"   ✅ 発注成功: {result.message}")
+                self.executed_markets.add(market_id)
+
+                entry_price = result.executed_price if result.executed_price is not None else current_price
+                if "NO" in signal.action.value.upper() and result.executed_price is not None:
+                    entry_price = 1.0 - result.executed_price
+
+                self.position_tracker.record_trade(
+                    market_id=market_id,
+                    token_id=token_id,
+                    yes_token_id=yes_token_id,
+                    question=question,
+                    side=signal.action.value,
+                    entry_price=entry_price,
+                    size=size,
+                    order_id=result.order_id,
+                    order_filled=False,
+                )
+
+                self.risk_manager.add_pending_exposure(size)
+
+                # LLM判断をキャッシュ
+                self._save_llm_judgment(token_id, signal)
+
+                # ファクター記録
+                active_factors = self.factor_manager.get_active_factors()
+                if active_factors:
+                    factor = active_factors[0]
+                    self.factor_manager.record_trade(
+                        factor_id=factor.hypothesis.id,
+                        pnl=0,
+                        entry_price=entry_price,
+                        market_id=market_id,
+                    )
+
+                if self.stats["trades_success"] % 50 == 0:
+                    asyncio.create_task(self._mine_new_factor())
+
+                if self.dashboard:
+                    await self.dashboard.push_trade({
+                        "question": question[:50],
+                        "side": signal.action.value,
+                        "price": current_price,
+                        "size": size,
+                        "success": True,
+                    })
+            else:
+                print(f"   ❌ 発注失敗: {result.message}")
+                self._log_event("order_placed", {
+                    "market_id": market_id,
+                    "question": question[:60],
+                    "side": signal.action.value,
+                    "price": round(current_price, 6),
+                    "size": round(size, 2),
+                    "success": False,
+                    "error": result.message,
+                })
+
+        except Exception as e:
+            print(f"   ❌ 発注エラー: {e}")
+
     async def _check_pending_gtc_orders(self):
         """GTC未約定注文の状態確認・60分超でキャンセル"""
         pending = self.position_tracker.get_pending_positions()
@@ -1677,27 +1517,6 @@ class Orchestrator:
 
         except Exception:
             pass  # ダッシュボード送信失敗でもメインループを止めない
-
-    # ========== 期限切れトリガー清掃 ==========
-
-    async def _cleanup_expired_triggers(self):
-        """期限切れトリガーを削除"""
-        expired = [
-            (tid, t) for tid, t in self.active_triggers.items()
-            if t.is_expired()
-        ]
-        
-        for tid, trigger in expired:
-            self.risk_manager.remove_pending_exposure(trigger.size)
-            del self.active_triggers[tid]
-            self._log_event("trigger_expired", {
-                "market_id": trigger.market_id,
-                "question": trigger.question[:60],
-                "side": trigger.side,
-                "target_price": round(trigger.target_price, 6),
-                "size": round(trigger.size, 2),
-            })
-            print(f"🗑️ トリガー期限切れ: {tid[:16]}...")
 
 
 # CLI用ヘルパー
