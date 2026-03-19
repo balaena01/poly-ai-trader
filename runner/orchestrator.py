@@ -1619,28 +1619,37 @@ class Orchestrator:
         if not pos:
             return
 
-        # 現在価格を CLOB から取得してPnL推定 (_push_positions_to_dashboard と同じヒューリスティック)
+        # _push_positions_to_dashboard と同じ優先順位で YES価格を取得
+        # 1) _last_markets (スキャン結果) → open positions 表示と同じ価格
+        # 2) CLOB 直接取得 (スキャン外マーケット)
         yes_price = pos.entry_price  # フォールバック
-        try:
-            from client import PolyClient
-            _pc = PolyClient()
-            _pc.connect(read_only=True)
-            fetch_token = pos.yes_token_id or pos.token_id
-            mid = _pc.get_midpoint(fetch_token)
-            if mid is not None:
-                if pos.yes_token_id:
-                    # YES token で取得済み → そのまま YES 価格
-                    yes_price = mid
-                else:
-                    # 旧レコード: side + ヒューリスティックで反転判定
-                    if "NO" in pos.side.upper():
-                        yes_price = 1.0 - mid
-                    elif abs(mid - (1.0 - pos.entry_price)) < abs(mid - pos.entry_price):
-                        yes_price = 1.0 - mid
-                    else:
+        found = False
+        for m in self._last_markets:
+            if getattr(m, "condition_id", None) == pos.market_id:
+                price = getattr(m, "yes_price", None)
+                if price:
+                    yes_price = price
+                    found = True
+                break
+        if not found:
+            try:
+                from client import PolyClient
+                _pc = PolyClient()
+                _pc.connect(read_only=True)
+                fetch_token = pos.yes_token_id or pos.token_id
+                mid = _pc.get_midpoint(fetch_token)
+                if mid is not None:
+                    if pos.yes_token_id:
                         yes_price = mid
-        except Exception:
-            pass
+                    else:
+                        if "NO" in pos.side.upper():
+                            yes_price = 1.0 - mid
+                        elif abs(mid - (1.0 - pos.entry_price)) < abs(mid - pos.entry_price):
+                            yes_price = 1.0 - mid
+                        else:
+                            yes_price = mid
+            except Exception:
+                pass
 
         estimated_pnl = pos.calculate_unrealized_pnl(yes_price)
         self.position_tracker.close_position(pos_id, exit_price=yes_price, realized_pnl=estimated_pnl)
