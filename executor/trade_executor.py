@@ -5,6 +5,7 @@ Trade Executor
 - ドライランモード
 - リスク管理統合
 """
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -345,7 +346,7 @@ class TradeExecutor:
                 actual_tokens = self._client.get_token_balance(token_id)
                 if actual_tokens is not None and actual_tokens > 0:
                     # 売り価格はSELL_NO→(1-price)がすでにprice引数に入っているのでそのまま使う
-                    corrected_size = round(actual_tokens * price, 2)
+                    corrected_size = math.floor(actual_tokens * price * 100) / 100  # 切り捨てで逆算超過を防止
                     if abs(corrected_size - size) > 0.10:
                         print(f"   ℹ️ sell size 補正: ${size:.2f} → ${corrected_size:.2f} (実残高 {actual_tokens:.4f} tokens × {price:.4f})")
                     size = corrected_size
