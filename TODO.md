@@ -407,6 +407,61 @@ python main.py run --live
   - `analyst/llm_analyst.py` 側も `price_history` キー対応済み
   - 1440 本未満 (マーケット開始直後等) は price_history を送らない
 
+- [ ] **ポジション管理ループの独立化 (利確・PENDING確認を分析間隔から切り離す)**
+
+  ### 問題
+  現在 `_check_pending_gtc_orders()` と `_check_position_exits()` は分析ループ内で実行されている。
+  分析間隔は解決まで7日以上のマーケットが多いと **240分 (4時間)** になるため:
+  - GTC注文の約定確認が最大4時間遅れる
+  - 含み益40%超えても利確チェックが4時間後
+  - 60分タイムアウトキャンセルが発動しない (キャンセル対象なのに4時間放置)
+  という問題がある。
+
+  ### 方針: `_positions_loop` を拡張して売買判断も担わせる
+
+  **Before:**
+  ```
+  _positions_loop (30秒ごと)
+   └── ダッシュボード表示のみ
+
+  分析ループ (最大4時間ごと)
+   ├── _analyze_market()             ← LLM分析・発注・LLM逆転クローズ
+   ├── _check_pending_gtc_orders()   ← PENDING約定確認・60分キャンセル
+   ├── _check_resolved_markets()     ← 解決済みPnL確定
+   └── _check_position_exits()       ← 利確・損切り
+  ```
+
+  **After:**
+  ```
+  _positions_loop (5分ごと)           ← LLM不要の判断を高頻度で実行
+   ├── _check_pending_gtc_orders()   ← PENDING約定確認・60分キャンセル
+   ├── _check_position_exits()       ← 利確・損切り
+   └── ダッシュボード表示
+
+  分析ループ (最大4時間ごと)          ← LLMコールが必要な判断のみ
+   ├── _analyze_market()             ← LLM分析・発注・LLM逆転クローズ
+   └── _check_resolved_markets()     ← 解決済みPnL確定
+  ```
+
+  ### 実装詳細
+
+  **`_positions_loop()` の変更 (`runner/orchestrator.py`):**
+  - sleep を 30秒 → 300秒 (5分) に変更
+  - `_check_pending_gtc_orders()` を追加
+  - `_check_position_exits()` を追加 (markets は `self._last_markets` を使用)
+  - ダッシュボード更新は末尾に維持
+
+  **分析ループ (`_analysis_loop()`) から削除:**
+  - `await self._check_pending_gtc_orders()` を削除
+  - `await self._check_position_exits(markets)` を削除
+
+  ### 注意
+  - `_check_position_exits()` が使う `markets` は `self._last_markets` で代替
+    (スキャン最新結果。価格が多少古くても利確判断には十分)
+  - `_positions_loop` の初回 sleep は 10秒のまま維持 (起動直後は分析ループ優先)
+  - LLM逆転クローズ (`_analyze_market` 内) は分析ループに残す
+    (LLMコールが必要なため高頻度化はコスト的に不適切)
+
 - [x] **約定済みポジションの早期クローズ戦略 (条件付きHOLD)** — 対応済み (`898225b`)
 
   ### 背景・判断

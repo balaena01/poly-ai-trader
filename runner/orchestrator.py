@@ -413,24 +413,9 @@ class Orchestrator:
                         break
                     await self._analyze_market(market)
                 
-                # GTC未約定注文のチェック・自動キャンセル
-                await self._check_pending_gtc_orders()
-
                 # 解決済みマーケットをチェック
                 await self._check_resolved_markets()
-                
-                # 利確・損切りチェック
-                await self._check_position_exits(markets)
 
-                # ダッシュボードにポジション一覧を送信
-                if self.dashboard:
-                    await self._push_positions_to_dashboard(markets)
-
-                # ダッシュボードにPnL更新
-                if self.dashboard:
-                    stats = self.position_tracker.get_stats()
-                    await self.dashboard.update_state("pnl", stats["total_pnl"])
-                
                 # 次の間隔を決定
                 interval = self._get_analysis_interval(markets)
                 print(f"\n⏳ 次回分析: {interval}分後...")
@@ -1470,15 +1455,24 @@ class Orchestrator:
     # ========== ポジションダッシュボード送信 ==========
 
     async def _positions_loop(self):
-        """30秒ごとにポジション価格をダッシュボードへ送信（分析ループとは独立）"""
+        """5分ごとにPENDING確認・利確・損切り・ダッシュボード更新（分析ループとは独立）"""
         await asyncio.sleep(10)  # 起動直後は分析ループに任せる
         while self._running:
             try:
+                # GTC未約定注文のチェック・自動キャンセル
+                await self._check_pending_gtc_orders()
+
+                # 利確・損切りチェック
+                await self._check_position_exits(self._last_markets)
+
+                # ダッシュボード更新
                 if self.dashboard:
                     await self._push_positions_to_dashboard(self._last_markets)
-            except Exception:
-                pass
-            await asyncio.sleep(30)
+                    stats = self.position_tracker.get_stats()
+                    await self.dashboard.update_state("pnl", stats["total_pnl"])
+            except Exception as e:
+                print(f"⚠️ positions_loop エラー: {e}")
+            await asyncio.sleep(300)  # 5分ごと
 
     async def _push_positions_to_dashboard(self, markets: List):
         """オープンポジションの含み損益を計算してダッシュボードへ送信"""
