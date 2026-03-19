@@ -936,6 +936,8 @@ class Orchestrator:
                         print(f"   🗑️ GTC自動キャンセル ({elapsed_min:.0f}分経過): {pos.question[:40]}")
                     else:
                         print(f"   ⚠️ GTC自動キャンセル失敗: {result.message}")
+                else:
+                    print(f"   ⏳ PENDING継続 ({elapsed_min:.0f}分経過 / {gtc_cancel_minutes}分でキャンセル): {pos.question[:40]}")
 
     async def _check_resolved_markets(self):
         """解決済みマーケットをチェックしてPnL確定・自動クローズ"""
@@ -1099,6 +1101,20 @@ class Orchestrator:
         )
 
         now = datetime.now(timezone.utc)
+
+        # exit_signals に含まれないACTIVEポジション = HOLD継続 → ログ出力
+        exit_market_ids = {es["position"].market_id for es in exit_signals}
+        for pos in open_positions:
+            if not pos.order_filled:
+                continue  # PENDING は _check_pending_gtc_orders で処理
+            if pos.market_id in exit_market_ids:
+                continue  # 以下で個別ログ出力
+            yes_price = current_prices.get(pos.market_id, pos.entry_price)
+            pnl_pct = pos.get_unrealized_pnl_pct(yes_price)
+            end_date = end_dates.get(pos.market_id)
+            days_left_str = f" {((end_date - now).total_seconds()/86400):.0f}d残" if end_date else ""
+            print(f"   ⏸️ HOLD: {pos.question[:40]} (pnl={pnl_pct:+.1%}{days_left_str})")
+
         for exit_signal in exit_signals:
             pos = exit_signal["position"]
             reason = exit_signal["reason"]
@@ -1460,6 +1476,12 @@ class Orchestrator:
         await asyncio.sleep(10)  # 起動直後は分析ループに任せる
         while self._running:
             try:
+                pending_pos = self.position_tracker.get_pending_positions()
+                active_pos  = self.position_tracker.get_open_positions()
+                active_pos  = [p for p in active_pos if p.order_filled]
+                now_str = datetime.now().strftime("%H:%M")
+                print(f"\n[{now_str}] 📋 ポジション確認 — PENDING:{len(pending_pos)} ACTIVE:{len(active_pos)}")
+
                 # GTC未約定注文のチェック・自動キャンセル
                 await self._check_pending_gtc_orders()
 
