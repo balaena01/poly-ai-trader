@@ -8,6 +8,10 @@
 
 | コミット | 内容 |
 |---|---|
+| `0838cf6` | feat: LLMにスポーツ市場判定 (is_sport) を追加し二重チェックを実装 |
+| `7a3bf11` | feat: positions_loop に判断結果ログを追加 (PENDING継続/HOLD継続/サイクルサマリ) |
+| `332cc76` | perf: ポジション更新ループを5分→1分に短縮 (PnL更新頻度改善) |
+| `4a058dc` | refactor: ダッシュボードをトリガー廃止後の仕様に再構成 (Pending tile / LLM Calibration パネル) |
 | `837200a` | feat: スポーツ系マーケットのトレードをスキップ (Brier記録は継続) |
 | `ebc923a` | fix: LLM skill未計測期間 (20件未満) を半Kelly運用に変更 |
 | `95c44f6` | fix: CoinGecko → Binance Public API に切り替え (APIキー不要) |
@@ -525,7 +529,7 @@ python main.py run --live
   - 売却注文は GTC (既存インフラ流用)
   - スポーツ市場のポジションも逆転クローズ対象にする
 
-- [ ] **トリガー機構を廃止して即時GTC発注に移行**
+- [x] **トリガー機構を廃止して即時GTC発注に移行** — 対応済み (`6e70fb9`)
 
   ### 問題
   現在のトリガーは `BUY_YES: price <= target_price (= 分析時現在価格)` で発火する。
