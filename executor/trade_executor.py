@@ -338,20 +338,43 @@ class TradeExecutor:
         if not self._connected:
             self.connect()
 
-        # ── SELL系: 実際のトークン残高からUSDC換算額を補正 ───────────────────
-        # pos.size は発注時のUSDC額だが、部分約定で実残高が少ない場合がある
-        # _place_order で size = amount / price → 実残高超過 → "not enough balance"
-        if side.upper() in ("SELL_YES", "SELL_NO") and self._connected and self._client:
+        is_sell = side.upper() in ("SELL_YES", "SELL_NO")
+        is_no_side = side.upper() in ("BUY_NO", "SELL_NO")
+
+        # ── Step1: CLOB価格確認 (先に実行して確定価格を得る) ──────────────
+        # BUY系 → ask、SELL系 → bid。price はトークンネイティブ単位で渡される。
+        # final_token_price: 実際に注文に使うトークン単位価格 (NO価格 or YES価格)
+        final_token_price = price  # デフォルト = WebSocket価格
+        if self._connected and self._client:
+            quote_side = "SELL" if is_sell else "BUY"
+            try:
+                live_price = self._client.get_price(token_id, side=quote_side)
+                if live_price:
+                    adjusted_price = (1 - live_price) if is_no_side else live_price
+                    clob_display = f"{live_price:.4f}(→YES換算:{adjusted_price:.4f})" if is_no_side else f"{live_price:.4f}"
+                    # price・live_price ともにトークンネイティブ単位で比較
+                    if abs(live_price - price) > 0.20:
+                        print(f"   ⚠️ CLOB価格異常 CLOB:{clob_display} 期待:{price:.4f} — WebSocket価格を使用")
+                    else:
+                        print(f"   📈 約定価格更新: {price:.4f} → {adjusted_price:.4f} (CLOB {quote_side}{'→YES換算' if is_no_side else ''})")
+                        final_token_price = live_price   # トークンネイティブ確定価格
+                        price = adjusted_price           # YESベースに変換してSignalへ渡す
+            except Exception:
+                pass
+        # ─────────────────────────────────────────────────────────────────
+
+        # ── Step2: SELL系残高補正 (CLOB確定価格を使って全残高を売る) ──────
+        # final_token_price でトークン数→USDC換算し math.floor で切り捨て
+        # → _place_order で size = amount / final_token_price が実残高を超えない
+        if is_sell and self._connected and self._client:
             try:
                 actual_tokens = self._client.get_token_balance(token_id)
                 if actual_tokens is not None and actual_tokens > 0:
-                    # 売り価格はSELL_NO→(1-price)がすでにprice引数に入っているのでそのまま使う
-                    corrected_size = math.floor(actual_tokens * price * 100) / 100  # 切り捨てで逆算超過を防止
+                    corrected_size = math.floor(actual_tokens * final_token_price * 100) / 100
                     if abs(corrected_size - size) > 0.10:
-                        print(f"   ℹ️ sell size 補正: ${size:.2f} → ${corrected_size:.2f} (実残高 {actual_tokens:.4f} tokens × {price:.4f})")
+                        print(f"   ℹ️ sell size 補正: ${size:.2f} → ${corrected_size:.2f} (実残高 {actual_tokens:.4f} tokens × {final_token_price:.4f})")
                     size = corrected_size
                 elif actual_tokens == 0:
-                    # 残高ゼロ → 売るトークンがない
                     print(f"   ⚠️ トークン残高ゼロ (token_id={token_id[:16]}…)")
                     return ExecutionResult(
                         success=False,
@@ -361,32 +384,6 @@ class TradeExecutor:
                     )
             except Exception as _e:
                 print(f"   ⚠️ トークン残高取得失敗 (fallback size={size:.2f}): {_e}")
-        # ─────────────────────────────────────────────────────────────────
-
-        # ── CLOB から実際のask/bid価格を取得 ──────────────────────────────
-        # WebSocketのmidpointではなく板情報から約定可能な価格を使う。
-        # BUY系 → ask価格 (出来値)、SELL系 → bid価格 (受け値)
-        if self._connected and self._client:
-            is_buy = side.upper() in ("BUY_YES", "BUY_NO")
-            quote_side = "BUY" if is_buy else "SELL"
-            try:
-                live_price = self._client.get_price(token_id, side=quote_side)
-                if live_price:
-                    is_no_side = side.upper() in ("BUY_NO", "SELL_NO")
-                    adjusted_price = (1 - live_price) if is_no_side else live_price
-                    # サニティチェック: 入力価格(WebSocket)との差が0.20超はCLOBオーダーブック異常
-                    # 超低確率マーケット(例: YES=2.8%)でCLOBがNO価格(0.972)を返すケース対策
-                    clob_display = f"{live_price:.4f}(→YES換算:{adjusted_price:.4f})" if is_no_side else f"{live_price:.4f}"
-                    # price は既にトークンネイティブ単位 (SELL_NO/BUY_NO なら NO価格、YES系ならYES価格)
-                    # live_price も同じくトークン単位 → 同単位で比較
-                    expected = price
-                    if abs(live_price - expected) > 0.20:
-                        print(f"   ⚠️ CLOB価格異常 CLOB:{clob_display} 期待:{expected:.4f} — WebSocket価格を使用")
-                    else:
-                        print(f"   📈 約定価格更新: {price:.4f} → {adjusted_price:.4f} (CLOB {quote_side}{'→YES換算' if is_no_side else ''})")
-                        price = adjusted_price
-            except Exception:
-                pass  # 取得失敗時はWebSocket価格で続行
         # ─────────────────────────────────────────────────────────────────
 
         # Signal オブジェクト作成
