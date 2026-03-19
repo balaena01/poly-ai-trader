@@ -407,7 +407,7 @@ python main.py run --live
   - `analyst/llm_analyst.py` 側も `price_history` キー対応済み
   - 1440 本未満 (マーケット開始直後等) は price_history を送らない
 
-- [ ] **約定済みポジションの早期クローズ戦略 (条件付きHOLD)**
+- [x] **約定済みポジションの早期クローズ戦略 (条件付きHOLD)** — 対応済み (`898225b`)
 
   ### 背景・判断
   現在は約定後は解決まで無条件HOLD (`enable_exit=False`)。
