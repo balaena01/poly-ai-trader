@@ -1106,6 +1106,7 @@ class Orchestrator:
             try:
                 from client import PolyClient
                 _pc = PolyClient()
+                _pc.connect(read_only=True)
                 for pos in missing:
                     tok = pos.yes_token_id or pos.token_id
                     if tok:
