@@ -407,7 +407,7 @@ python main.py run --live
   - `analyst/llm_analyst.py` 側も `price_history` キー対応済み
   - 1440 本未満 (マーケット開始直後等) は price_history を送らない
 
-- [ ] **ポジション管理ループの独立化 (利確・PENDING確認を分析間隔から切り離す)**
+- [x] **ポジション管理ループの独立化 (利確・PENDING確認を分析間隔から切り離す)** — 対応済み (`0176c18`)
 
   ### 問題
   現在 `_check_pending_gtc_orders()` と `_check_position_exits()` は分析ループ内で実行されている。
