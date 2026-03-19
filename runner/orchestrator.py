@@ -1456,7 +1456,7 @@ class Orchestrator:
     # ========== ポジションダッシュボード送信 ==========
 
     async def _positions_loop(self):
-        """5分ごとにPENDING確認・利確・損切り・ダッシュボード更新（分析ループとは独立）"""
+        """1分ごとにPENDING確認・利確・損切り・ダッシュボード更新（分析ループとは独立）"""
         await asyncio.sleep(10)  # 起動直後は分析ループに任せる
         while self._running:
             try:
@@ -1473,7 +1473,7 @@ class Orchestrator:
                     await self.dashboard.update_state("pnl", stats["total_pnl"])
             except Exception as e:
                 print(f"⚠️ positions_loop エラー: {e}")
-            await asyncio.sleep(300)  # 5分ごと
+            await asyncio.sleep(60)  # 1分ごと
 
     async def _push_positions_to_dashboard(self, markets: List):
         """オープンポジションの含み損益を計算してダッシュボードへ送信"""
