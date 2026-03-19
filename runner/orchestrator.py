@@ -589,8 +589,14 @@ class Orchestrator:
                 return
 
             # スポーツ系マーケットはトレード対象外 (Brier記録のみ)
-            if is_sports_market(question):
-                print(f"   🏟️ スポーツ市場のためトレードスキップ (Brier記録のみ)")
+            # キーワード判定 OR LLM判定のどちらかがスポーツと判断したらスキップ
+            _kw_sport = is_sports_market(question)
+            _llm_sport = getattr(signal, 'llm_is_sport', None) is True
+            if _kw_sport or _llm_sport:
+                reason = []
+                if _kw_sport:  reason.append("キーワード")
+                if _llm_sport: reason.append("LLM判定")
+                print(f"   🏟️ スポーツ市場のためトレードスキップ ({'+'.join(reason)}, Brier記録のみ)")
                 return
 
             # 信頼度調整

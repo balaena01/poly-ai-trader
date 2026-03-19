@@ -43,6 +43,8 @@ class EnsembleSignal:
 
     # LLM推論テキスト (Auditorのハルシネーション検出に使用)
     llm_reasoning: str = ""
+    # LLMによるスポーツ市場判定
+    llm_is_sport: Optional[bool] = None
     
     @property
     def is_tradeable(self) -> bool:
@@ -212,6 +214,9 @@ class EnsembleAnalyst:
         llm_prob = llm_result.get("probability", 0.5) if llm_result else 0.5
         llm_conf = llm_result.get("confidence", 0.5) if llm_result else 0.5
         llm_reasoning = llm_result.get("reasoning", "") if llm_result else ""
+        llm_is_sport = llm_result.get("is_sport", None) if llm_result else None
+        if llm_is_sport:
+            print(f"   🏟️ LLM判定: スポーツ市場")
 
         # skill_score に応じて LLM シグナルを減衰
         # skill=None(未計測) → attenuation=1.0（そのまま）
@@ -317,6 +322,7 @@ class EnsembleAnalyst:
                 edge=0.0,
                 confidence=0.0,
                 llm_reasoning=llm_reasoning,
+                llm_is_sport=llm_is_sport,
             )
 
         # ========== 方向一致チェック ==========
@@ -346,6 +352,7 @@ class EnsembleAnalyst:
                     edge=0.0,
                     confidence=0.0,
                     llm_reasoning=llm_reasoning,
+                    llm_is_sport=llm_is_sport,
                 )
 
         # ========== Orderflow 分析 ==========
@@ -408,6 +415,7 @@ class EnsembleAnalyst:
             edge=edge,
             confidence=confidence,
             llm_reasoning=llm_reasoning,
+            llm_is_sport=llm_is_sport,
         )
     
     async def analyze_markets(

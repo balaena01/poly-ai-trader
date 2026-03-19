@@ -34,6 +34,7 @@ class Signal:
     edge: float
     reasoning: str
     timestamp: datetime = None
+    llm_is_sport: Optional[bool] = None  # LLMによるスポーツ市場判定
 
     def __post_init__(self):
         if self.timestamp is None:
@@ -80,9 +81,13 @@ class LLMAnalyst:
 2. バイアスを避け、確率を正確に見積もること
 3. 不確実性が高い場合は confidence を下げること
 4. 根拠を簡潔に説明すること
+5. is_sport: このマーケットがスポーツ・eスポーツ・格闘技・競馬など「競技の勝敗や試合結果」に関するものであれば true。
+   - true の例: NFL試合の勝者、NBAチャンピオン、テニス大会の優勝者、UFC試合結果、競馬レース、esports大会
+   - false の例: BTC価格予測、大統領選挙、経済指標、エンタメ・映画、政治イベント
+   - 判断が難しい場合は false (false side-safe)
 
 ## 出力形式 (JSON のみ。他のテキスト不要)
-{"probability": 0.65, "confidence": 0.7, "reasoning": "理由を簡潔に"}
+{"probability": 0.65, "confidence": 0.7, "reasoning": "理由を簡潔に", "is_sport": false}
 """
 
     def __init__(
