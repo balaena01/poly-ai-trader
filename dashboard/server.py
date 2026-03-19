@@ -481,6 +481,49 @@ class DashboardServer:
         .pos-row.active.losing {
             border-left-color: var(--red);
         }
+        .pos-row.manual-sale {
+            border-left: 2px solid #ff2d55;
+            padding-left: 12px;
+            background: repeating-linear-gradient(
+                -45deg,
+                transparent,
+                transparent 6px,
+                rgba(255,45,85,0.03) 6px,
+                rgba(255,45,85,0.03) 12px
+            );
+        }
+        .manual-sale-banner {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 6px;
+            padding: 4px 8px;
+            border-radius: 3px;
+            background: rgba(255,45,85,0.08);
+            border: 1px solid rgba(255,45,85,0.35);
+        }
+        .manual-sale-dot {
+            width: 5px; height: 5px;
+            border-radius: 50%;
+            background: #ff2d55;
+            box-shadow: 0 0 6px rgba(255,45,85,0.8);
+            animation: fade-pulse 0.8s ease-in-out infinite;
+            flex-shrink: 0;
+        }
+        .manual-sale-text {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #ff2d55;
+        }
+        .manual-sale-sub {
+            font-family: var(--font-mono);
+            font-size: 9px;
+            color: rgba(255,45,85,0.6);
+            margin-left: auto;
+        }
 
         .pos-question {
             font-size: 12px;
@@ -1087,9 +1130,11 @@ class DashboardServer:
         const pnlPct = pos.unrealized_pnl_pct || 0;
         const isUp   = pnl >  0.005;
         const isDn   = pnl < -0.005;
+        const isManual = pos.needs_manual_sale === true;
 
-        const rowClass = isPending ? 'pos-row pending'
-                       : isDn     ? 'pos-row active losing'
+        const rowClass = isPending  ? 'pos-row pending'
+                       : isManual  ? 'pos-row active manual-sale'
+                       : isDn      ? 'pos-row active losing'
                        : 'pos-row active';
 
         const sideUpper = (pos.side || '').toUpperCase();
@@ -1129,6 +1174,12 @@ class DashboardServer:
         }
 
         const pendingBadge = isPending ? '<span class="pending-tag">PENDING</span>' : '';
+        const manualSaleBanner = isManual ? `
+            <div class="manual-sale-banner">
+                <span class="manual-sale-dot"></span>
+                <span class="manual-sale-text">Manual Sale Required</span>
+                <span class="manual-sale-sub">system close failed — sell on Polymarket</span>
+            </div>` : '';
 
         return `<div class="${rowClass}">
             <div>
@@ -1144,6 +1195,7 @@ class DashboardServer:
                     ${age ? `<span class="pos-age">${age}</span>` : ''}
                     ${pendingBadge}
                 </div>
+                ${manualSaleBanner}
             </div>
             ${pnlHtml}
         </div>`;

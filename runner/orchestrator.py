@@ -730,7 +730,11 @@ class Orchestrator:
                 })
                 print(f"   ✅ クローズ完了: ${realized_pnl:+.2f}")
             else:
-                print(f"   ❌ クローズ失敗: {result.message}")
+                msg = result.message or ""
+                if "スキップ" in msg or "not enough" in msg.lower():
+                    self.position_tracker.mark_needs_manual_sale(pos.id)
+                    print(f"   ⚠️ 手動売却フラグをセット: {pos.question[:40]}")
+                print(f"   ❌ クローズ失敗: {msg}")
         except Exception as e:
             print(f"   ❌ クローズエラー: {e}")
 
@@ -1589,6 +1593,7 @@ class Orchestrator:
                     "created_at": pos.created_at.isoformat() if pos.created_at else None,
                     "order_filled": pos.order_filled,
                     "order_id": pos.order_id,
+                    "needs_manual_sale": pos.needs_manual_sale,
                 })
 
             await self.dashboard.push_positions(positions_data)

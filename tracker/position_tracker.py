@@ -40,6 +40,9 @@ class Position:
     order_id: Optional[str] = None        # CLOBのorder ID
     order_filled: bool = True             # False = GTC未約定
 
+    # 手動売却フラグ (トークン未保有等でシステムクローズ不可)
+    needs_manual_sale: bool = False
+
     # 解決後
     exit_price: Optional[float] = None
     resolved_at: Optional[datetime] = None
@@ -87,6 +90,7 @@ class Position:
             "created_at": self.created_at.isoformat(),
             "order_id": self.order_id,
             "order_filled": self.order_filled,
+            "needs_manual_sale": self.needs_manual_sale,
             "exit_price": self.exit_price,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
             "pnl": self.pnl,
@@ -107,6 +111,7 @@ class Position:
             created_at=datetime.fromisoformat(data["created_at"]),
             order_id=data.get("order_id"),
             order_filled=data.get("order_filled", True),
+            needs_manual_sale=data.get("needs_manual_sale", False),
             exit_price=data.get("exit_price"),
             resolved_at=datetime.fromisoformat(data["resolved_at"]) if data.get("resolved_at") else None,
             pnl=data.get("pnl", 0.0),
@@ -208,6 +213,12 @@ class PositionTracker:
         """GTC注文が約定済みとしてマーク"""
         if pos_id in self.positions:
             self.positions[pos_id].order_filled = True
+            self._save()
+
+    def mark_needs_manual_sale(self, pos_id: str):
+        """手動売却が必要なポジションとしてマーク"""
+        if pos_id in self.positions:
+            self.positions[pos_id].needs_manual_sale = True
             self._save()
 
     def remove_position(self, pos_id: str):
