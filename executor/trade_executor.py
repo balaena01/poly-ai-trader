@@ -337,6 +337,31 @@ class TradeExecutor:
         if not self._connected:
             self.connect()
 
+        # ── SELL系: 実際のトークン残高からUSDC換算額を補正 ───────────────────
+        # pos.size は発注時のUSDC額だが、部分約定で実残高が少ない場合がある
+        # _place_order で size = amount / price → 実残高超過 → "not enough balance"
+        if side.upper() in ("SELL_YES", "SELL_NO") and self._connected and self._client:
+            try:
+                actual_tokens = self._client.get_token_balance(token_id)
+                if actual_tokens is not None and actual_tokens > 0:
+                    # 売り価格はSELL_NO→(1-price)がすでにprice引数に入っているのでそのまま使う
+                    corrected_size = round(actual_tokens * price, 2)
+                    if abs(corrected_size - size) > 0.10:
+                        print(f"   ℹ️ sell size 補正: ${size:.2f} → ${corrected_size:.2f} (実残高 {actual_tokens:.4f} tokens × {price:.4f})")
+                    size = corrected_size
+                elif actual_tokens == 0:
+                    # 残高ゼロ → 売るトークンがない
+                    print(f"   ⚠️ トークン残高ゼロ (token_id={token_id[:16]}…)")
+                    return ExecutionResult(
+                        success=False,
+                        signal=Signal(market_id=market_id, token_id=token_id, question="", action=Action.HOLD,
+                                      market_price=price, predicted_prob=price, edge=0, confidence=0, reasoning=""),
+                        message="スキップ: トークン残高ゼロ",
+                    )
+            except Exception as _e:
+                print(f"   ⚠️ トークン残高取得失敗 (fallback size={size:.2f}): {_e}")
+        # ─────────────────────────────────────────────────────────────────
+
         # ── CLOB から実際のask/bid価格を取得 ──────────────────────────────
         # WebSocketのmidpointではなく板情報から約定可能な価格を使う。
         # BUY系 → ask価格 (出来値)、SELL系 → bid価格 (受け値)
