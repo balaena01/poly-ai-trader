@@ -626,7 +626,8 @@ class Orchestrator:
             if _check_reversal_exit:
                 filled_pos = next(
                     (p for p in self.position_tracker.get_open_positions()
-                     if p.market_id == market_id and p.order_filled),
+                     if p.market_id == market_id and p.order_filled
+                     and not p.pending_sell_order_id),  # 売り注文約定待ち中は除外
                     None,
                 )
                 if filled_pos:
