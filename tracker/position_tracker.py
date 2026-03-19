@@ -7,7 +7,7 @@ Position Tracker
 import json
 import os
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from pathlib import Path
 from enum import Enum
@@ -31,7 +31,7 @@ class Position:
     size: float  # USDC
     
     status: PositionStatus = PositionStatus.OPEN
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # YES token ID (スキャン外ポジションの現在価格取得に使用; 常にYES token)
     yes_token_id: Optional[str] = None

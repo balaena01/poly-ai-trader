@@ -929,7 +929,8 @@ class Orchestrator:
                 # 未約定 → 経過時間チェック
                 created = pos.created_at
                 if created.tzinfo is None:
-                    created = created.replace(tzinfo=timezone.utc)
+                    # 旧ポジション: ナイーブなローカル時刻 → UTC に正しく変換
+                    created = created.astimezone(timezone.utc)
                 elapsed_min = (now - created).total_seconds() / 60
 
                 if elapsed_min > gtc_cancel_minutes:
@@ -1098,6 +1099,21 @@ class Orchestrator:
                     current_prices[market_id] = yes_price
                 if end_date:
                     end_dates[market_id] = end_date
+
+        # _last_markets にないポジションは CLOB midpoint で価格を補完
+        missing = [p for p in open_positions if p.order_filled and p.market_id not in current_prices]
+        if missing:
+            try:
+                from client import PolyClient
+                _pc = PolyClient()
+                for pos in missing:
+                    tok = pos.yes_token_id or pos.token_id
+                    if tok:
+                        mid = _pc.get_midpoint(tok)
+                        if mid is not None:
+                            current_prices[pos.market_id] = mid
+            except Exception:
+                pass
 
         # 利確・損切り候補を取得
         exit_signals = self.position_tracker.check_exit_conditions(
