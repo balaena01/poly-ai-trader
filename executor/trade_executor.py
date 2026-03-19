@@ -377,7 +377,9 @@ class TradeExecutor:
                     # サニティチェック: 入力価格(WebSocket)との差が0.20超はCLOBオーダーブック異常
                     # 超低確率マーケット(例: YES=2.8%)でCLOBがNO価格(0.972)を返すケース対策
                     clob_display = f"{live_price:.4f}(→YES換算:{adjusted_price:.4f})" if is_no_side else f"{live_price:.4f}"
-                    expected = (1 - price) if is_no_side else price
+                    # price は既にトークンネイティブ単位 (SELL_NO/BUY_NO なら NO価格、YES系ならYES価格)
+                    # live_price も同じくトークン単位 → 同単位で比較
+                    expected = price
                     if abs(live_price - expected) > 0.20:
                         print(f"   ⚠️ CLOB価格異常 CLOB:{clob_display} 期待:{expected:.4f} — WebSocket価格を使用")
                     else:
