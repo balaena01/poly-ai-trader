@@ -8,7 +8,8 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: GTC売り注文を即CLOSEDにせずPENDING_SELL状態で約定確認後にCLOSED |
+| (最新) | fix: 売却時に実トークン残高を取得してsellサイズを補正 (部分約定対応) |
+| `18c9536` | fix: GTC売り注文を即CLOSEDにせずPENDING_SELL状態で約定確認後にCLOSED |
 | `5093cf3` | feat: 手動売却アラートの解除ボタン実装 (2クリック確認 + dismiss_manual_sale API) |
 | `0838cf6` | feat: LLMにスポーツ市場判定 (is_sport) を追加し二重チェックを実装 |
 | `7a3bf11` | feat: positions_loop に判断結果ログを追加 (PENDING継続/HOLD継続/サイクルサマリ) |
@@ -620,6 +621,27 @@ python main.py run --live
   - 最小注文サイズチェック (5 tokens) は発注前に必須 (既存ロジック流用)
   - エクスポージャーチェックも発注前に必須 (既存ロジック流用)
   - `executed_markets` の管理は現状通り (再エントリー防止)
+
+- [x] **⑲ sell時のサイズ不一致による "not enough balance" エラー** — 対応済み
+
+  ### 症状
+  ```
+  ⏭️ トークン未保有またはアローワンス不足のためスキップ: not enough balance / allowance
+  ```
+  Polymarket上でトークンを保有しているにもかかわらずSELL注文が失敗する。
+
+  ### 原因
+  - `pos.size` はシステムが意図したUSDC投資額 ($6.65)
+  - GTC買い注文が**部分約定**した場合、実際のトークン数は少ない (例: 6.7トークン = $1.95)
+  - `_place_order` 内で `size = amount / price` → USDC投資額÷NO価格 = トークン数に変換
+  - 売却時: `amount = pos.size = $6.65`, `price = NO価格 = 0.61` → `size = 10.9トークン`
+  - 実残高6.7トークン < 要求10.9トークン → "not enough balance"
+
+  ### 修正
+  - `PolyClient.get_token_balance(token_id)`: `get_balance_allowance(AssetType.CONDITIONAL, token_id)` で実残高を取得
+  - `_exit_position()`: 売却前に実トークン残高を照会し、`sell_size = actual_tokens × sell_price` に補正
+  - 残高差が$0.50以上のときログ出力
+  - 取得失敗時は従来の `pos.size` にフォールバック
 
 - [x] **⑱ GTC売り注文を即CLOSEDにするバグ** — 対応済み
 

@@ -498,6 +498,23 @@ class PolyClient:
         except Exception as e:
             return TradeResult(success=False, message=str(e))
     
+    def get_token_balance(self, token_id: str) -> Optional[float]:
+        """条件付きトークン (ERC-1155) の保有残高をトークン数で取得"""
+        if not self._authenticated or not self._client:
+            return None
+        try:
+            from py_clob_client.clob_types import BalanceAllowanceParams, AssetType
+            params = BalanceAllowanceParams(
+                asset_type=AssetType.CONDITIONAL,
+                token_id=token_id,
+            )
+            result = self._client.get_balance_allowance(params)
+            if result and "balance" in result:
+                return float(result["balance"]) / 1e6
+        except Exception:
+            pass
+        return None
+
     def get_order(self, order_id: str) -> Optional[Dict]:
         """注文ステータスを取得 (status: LIVE / MATCHED / CANCELLED)"""
         if not self._authenticated:

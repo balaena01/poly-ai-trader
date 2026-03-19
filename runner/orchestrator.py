@@ -704,12 +704,26 @@ class Orchestrator:
         exit_side = "SELL_YES" if "YES" in pos.side.upper() else "SELL_NO"
         sell_price = current_price if "YES" in exit_side else (1.0 - current_price)
 
+        # 実際のトークン残高を取得してsellサイズを確定
+        # pos.size はUSDC投資額だが、部分約定等で実残高が異なる場合がある
+        sell_size = pos.size
+        try:
+            if self.executor._client and self.executor._connected:
+                actual_tokens = self.executor._client.get_token_balance(pos.token_id)
+                if actual_tokens is not None and actual_tokens > 0:
+                    # トークン数 × sell_price = USDC換算額
+                    sell_size = round(actual_tokens * sell_price, 2)
+                    if abs(sell_size - pos.size) > 0.5:
+                        print(f"   ℹ️ sell size 調整: ${pos.size:.2f} → ${sell_size:.2f} (実残高 {actual_tokens:.4f} tokens)")
+        except Exception:
+            pass
+
         try:
             result = await self.executor.execute_order(
                 market_id=pos.market_id,
                 token_id=pos.token_id,
                 side=exit_side,
-                size=pos.size,
+                size=sell_size,
                 price=sell_price,
             )
             if result.success:
