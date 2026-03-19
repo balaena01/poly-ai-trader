@@ -36,9 +36,13 @@ class Position:
     # YES token ID (スキャン外ポジションの現在価格取得に使用; 常にYES token)
     yes_token_id: Optional[str] = None
 
-    # GTC注文追跡
+    # GTC注文追跡 (買い)
     order_id: Optional[str] = None        # CLOBのorder ID
     order_filled: bool = True             # False = GTC未約定
+
+    # GTC売り注文追跡 (利確・損切り・LLM逆転クローズ)
+    pending_sell_order_id: Optional[str] = None   # 売り注文発注済み・約定待ち
+    pending_sell_price: Optional[float] = None    # 売り時の YES 価格
 
     # 手動売却フラグ (トークン未保有等でシステムクローズ不可)
     needs_manual_sale: bool = False
@@ -90,6 +94,8 @@ class Position:
             "created_at": self.created_at.isoformat(),
             "order_id": self.order_id,
             "order_filled": self.order_filled,
+            "pending_sell_order_id": self.pending_sell_order_id,
+            "pending_sell_price": self.pending_sell_price,
             "needs_manual_sale": self.needs_manual_sale,
             "exit_price": self.exit_price,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
@@ -111,6 +117,8 @@ class Position:
             created_at=datetime.fromisoformat(data["created_at"]),
             order_id=data.get("order_id"),
             order_filled=data.get("order_filled", True),
+            pending_sell_order_id=data.get("pending_sell_order_id"),
+            pending_sell_price=data.get("pending_sell_price"),
             needs_manual_sale=data.get("needs_manual_sale", False),
             exit_price=data.get("exit_price"),
             resolved_at=datetime.fromisoformat(data["resolved_at"]) if data.get("resolved_at") else None,
@@ -226,6 +234,25 @@ class PositionTracker:
         if pos_id in self.positions:
             self.positions[pos_id].needs_manual_sale = False
             self._save()
+
+    def mark_pending_sell(self, pos_id: str, order_id: str, sell_price: float):
+        """GTC売り注文発注済みとしてマーク"""
+        if pos_id in self.positions:
+            self.positions[pos_id].pending_sell_order_id = order_id
+            self.positions[pos_id].pending_sell_price = sell_price
+            self._save()
+
+    def cancel_pending_sell(self, pos_id: str):
+        """GTC売り注文キャンセル → ACTIVEに戻す"""
+        if pos_id in self.positions:
+            self.positions[pos_id].pending_sell_order_id = None
+            self.positions[pos_id].pending_sell_price = None
+            self._save()
+
+    def get_pending_sell_positions(self) -> List[Position]:
+        """GTC売り注文待ちポジション"""
+        return [p for p in self.positions.values()
+                if p.status == PositionStatus.OPEN and p.pending_sell_order_id]
 
     def remove_position(self, pos_id: str):
         """ポジションを削除（キャンセル時用）"""

@@ -713,23 +713,11 @@ class Orchestrator:
                 price=sell_price,
             )
             if result.success:
-                realized_pnl = pos.calculate_unrealized_pnl(current_price)
-                self.position_tracker.close_position(
-                    position_id=pos.id,
-                    exit_price=current_price,
-                    realized_pnl=realized_pnl,
-                )
-                if pos.market_id in self.risk_manager.open_positions:
-                    del self.risk_manager.open_positions[pos.market_id]
-                self.executed_markets.discard(pos.market_id)
-                self._log_event("position_exited", {
-                    "market_id": pos.market_id,
-                    "question": pos.question[:60],
-                    "reason": reason,
-                    "exit_price": round(current_price, 6),
-                    "realized_pnl": round(realized_pnl, 4),
-                })
-                print(f"   ✅ クローズ完了: ${realized_pnl:+.2f}")
+                # GTC売り注文発注成功 → PENDING_SELL 状態に移行
+                # 約定確認は _check_pending_gtc_orders で行い、確認後に close_position()
+                sell_order_id = result.order_id or ""
+                self.position_tracker.mark_pending_sell(pos.id, sell_order_id, current_price)
+                print(f"   ⏳ 売り注文発注済み (約定確認待ち): {pos.question[:40]}")
             else:
                 msg = result.message or ""
                 if "スキップ" in msg or "not enough" in msg.lower():
@@ -951,6 +939,54 @@ class Orchestrator:
                 else:
                     print(f"   ⏳ PENDING継続 ({elapsed_min:.0f}分経過 / {gtc_cancel_minutes}分でキャンセル): {pos.question[:40]}")
 
+        # ── GTC売り注文の約定確認 ──────────────────────────────────────────
+        pending_sell = self.position_tracker.get_pending_sell_positions()
+        for pos in pending_sell:
+            if not pos.pending_sell_order_id:
+                continue
+
+            if active_ids is not None and pos.pending_sell_order_id not in active_ids:
+                order = client.get_order(pos.pending_sell_order_id)
+                sell_status = _order_status(order)
+            else:
+                order = client.get_order(pos.pending_sell_order_id)
+                sell_status = _order_status(order)
+
+            if sell_status in ("MATCHED", "FILLED"):
+                exit_price = pos.pending_sell_price or pos.entry_price
+                realized_pnl = pos.calculate_unrealized_pnl(exit_price)
+                self.position_tracker.close_position(pos.id, exit_price, realized_pnl)
+                if pos.market_id in self.risk_manager.open_positions:
+                    del self.risk_manager.open_positions[pos.market_id]
+                self.executed_markets.discard(pos.market_id)
+                self._log_event("position_exited", {
+                    "market_id": pos.market_id,
+                    "question": pos.question[:60],
+                    "reason": "sell_confirmed",
+                    "exit_price": round(exit_price, 6),
+                    "realized_pnl": round(realized_pnl, 4),
+                })
+                print(f"   ✅ 売り約定確認・CLOSED: {pos.question[:40]} PnL: ${realized_pnl:+.2f}")
+
+            elif sell_status == "CANCELLED":
+                self.position_tracker.cancel_pending_sell(pos.id)
+                print(f"   ↩️ 売り注文キャンセル検出 → ACTIVE復帰: {pos.question[:40]}")
+
+            elif sell_status == "LIVE":
+                created = pos.created_at
+                if created.tzinfo is None:
+                    created = created.astimezone(timezone.utc)
+                elapsed_min = (now - created).total_seconds() / 60
+                if elapsed_min > gtc_cancel_minutes:
+                    result = client.cancel_order(pos.pending_sell_order_id)
+                    if result.success:
+                        self.position_tracker.cancel_pending_sell(pos.id)
+                        print(f"   ↩️ 売り注文タイムアウトキャンセル ({elapsed_min:.0f}分) → ACTIVE復帰: {pos.question[:40]}")
+                    else:
+                        print(f"   ⚠️ 売り注文キャンセル失敗: {result.message}")
+                else:
+                    print(f"   ⏳ 売り注文待機中 ({elapsed_min:.0f}分経過): {pos.question[:40]}")
+
     async def _check_resolved_markets(self):
         """解決済みマーケットをチェックしてPnL確定・自動クローズ"""
         open_market_ids = self.position_tracker.get_open_market_ids()
@@ -1135,6 +1171,8 @@ class Orchestrator:
         for pos in open_positions:
             if not pos.order_filled:
                 continue  # PENDING は _check_pending_gtc_orders で処理
+            if pos.pending_sell_order_id:
+                continue  # 売り注文約定待ち中
             if pos.market_id in exit_market_ids:
                 continue  # 以下で個別ログ出力
             yes_price = current_prices.get(pos.market_id, pos.entry_price)
@@ -1145,6 +1183,8 @@ class Orchestrator:
 
         for exit_signal in exit_signals:
             pos = exit_signal["position"]
+            if pos.pending_sell_order_id:
+                continue  # 売り注文約定待ち中 → 再発注しない
             reason = exit_signal["reason"]
             pnl_pct = exit_signal["pnl_pct"]
             yes_price = current_prices.get(pos.market_id, 0.5)

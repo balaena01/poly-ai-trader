@@ -8,7 +8,8 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | feat: 手動売却アラートの解除ボタン実装 (2クリック確認 + dismiss_manual_sale API) |
+| (最新) | fix: GTC売り注文を即CLOSEDにせずPENDING_SELL状態で約定確認後にCLOSED |
+| `5093cf3` | feat: 手動売却アラートの解除ボタン実装 (2クリック確認 + dismiss_manual_sale API) |
 | `0838cf6` | feat: LLMにスポーツ市場判定 (is_sport) を追加し二重チェックを実装 |
 | `7a3bf11` | feat: positions_loop に判断結果ログを追加 (PENDING継続/HOLD継続/サイクルサマリ) |
 | `332cc76` | perf: ポジション更新ループを5分→1分に短縮 (PnL更新頻度改善) |
@@ -619,6 +620,25 @@ python main.py run --live
   - 最小注文サイズチェック (5 tokens) は発注前に必須 (既存ロジック流用)
   - エクスポージャーチェックも発注前に必須 (既存ロジック流用)
   - `executed_markets` の管理は現状通り (再エントリー防止)
+
+- [x] **⑱ GTC売り注文を即CLOSEDにするバグ** — 対応済み
+
+  ### 症状
+  利確・損切りトリガー後「クローズ完了」と表示されるが、Polymarket上では依然トークンを保有中。
+  次の positions_loop でも CLOSED 扱いのため再チェックされず放置。
+
+  ### 原因
+  `_exit_position()` が `executor.execute_order()` の成功（= 注文発注成功）を約定完了と誤解し、
+  即 `close_position()` を呼んでいた。GTC なので約定するまでは未成立。
+
+  ### 修正
+  - `Position` に `pending_sell_order_id / pending_sell_price` フィールドを追加
+  - `_exit_position()`: 売り注文発注成功時 → `mark_pending_sell()` のみ (CLOSED にしない)
+  - `_check_pending_gtc_orders()`: GTC買い注文と同様に売り注文も CLOB 確認
+    - MATCHED/FILLED → `close_position()` + RiskManager 更新
+    - CANCELLED → `cancel_pending_sell()` で ACTIVE 復帰
+    - LIVE 60分超 → 自動キャンセル → ACTIVE 復帰 → 次ループで再判断
+  - `_check_position_exits()`: `pending_sell_order_id` があるポジションをスキップ (再発注防止)
 
 - [ ] **同一イベントへの集中リスク対策 (相関グループ管理)**
   - 現状: "GTA VI before X?" 系マーケットが複数トリガーに並ぶと実質1ポジション分のリスクになる
