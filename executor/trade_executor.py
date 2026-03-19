@@ -288,7 +288,12 @@ class TradeExecutor:
                     print(f"  ✅ {signal.action.value} ${amount:.2f} @ {price:.1%}")
                     return result
                 else:
-                    print(f"  ⚠️ 試行 {attempt} 失敗: {trade_result.message}")
+                    msg = trade_result.message or ""
+                    # トークン未保有 / アローワンス未設定: リトライしても無意味なので即スキップ
+                    if "not enough balance" in msg.lower() or "allowance" in msg.lower():
+                        print(f"  ⏭️ トークン未保有またはアローワンス不足のためスキップ (Polymarket上で手動売却が必要): {msg}")
+                        return ExecutionResult(success=False, signal=signal, message=f"スキップ: {msg}")
+                    print(f"  ⚠️ 試行 {attempt} 失敗: {msg}")
 
             except Exception as e:
                 print(f"  ⚠️ 試行 {attempt} 例外: {e}")
