@@ -82,7 +82,7 @@ class RiskManager:
         max_correlated_exposure: float = 0.20,  # 相関資産の最大エクスポージャー
         
         # 総エクスポージャー設定
-        max_total_exposure: float = 0.30,  # 全ポジション合計の最大比率
+        max_total_exposure: float = 0.50,  # 全ポジション合計の最大比率
     ):
         """
         初期化
