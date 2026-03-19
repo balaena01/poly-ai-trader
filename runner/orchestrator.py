@@ -167,6 +167,7 @@ class Orchestrator:
         self.dashboard = None
         if self.config.dashboard and DASHBOARD_AVAILABLE:
             self.dashboard = DashboardServer(port=self.config.dashboard_port)
+            self.dashboard.on_dismiss_manual_sale = self._handle_dismiss_manual_sale
         
         # WebSocket
         self.websocket: Optional[PolyWebSocket] = None
@@ -1582,6 +1583,7 @@ class Orchestrator:
                 unrealized = pos.calculate_unrealized_pnl(yes_price)
                 unrealized_pct = pos.get_unrealized_pnl_pct(yes_price)
                 positions_data.append({
+                    "pos_id": pos.id,
                     "market_id": pos.market_id,
                     "question": pos.question[:60],
                     "side": pos.side,
@@ -1610,6 +1612,13 @@ class Orchestrator:
 
         except Exception:
             pass  # ダッシュボード送信失敗でもメインループを止めない
+
+    async def _handle_dismiss_manual_sale(self, pos_id: str):
+        """ダッシュボードからの手動売却アラート解除リクエスト"""
+        self.position_tracker.dismiss_manual_sale(pos_id)
+        print(f"✅ 手動売却アラート解除: {pos_id}")
+        if self.dashboard:
+            await self._push_positions_to_dashboard(self._last_markets)
 
 
 # CLI用ヘルパー

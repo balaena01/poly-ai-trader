@@ -8,6 +8,7 @@
 
 | コミット | 内容 |
 |---|---|
+| (最新) | feat: 手動売却アラートの解除ボタン実装 (2クリック確認 + dismiss_manual_sale API) |
 | `0838cf6` | feat: LLMにスポーツ市場判定 (is_sport) を追加し二重チェックを実装 |
 | `7a3bf11` | feat: positions_loop に判断結果ログを追加 (PENDING継続/HOLD継続/サイクルサマリ) |
 | `332cc76` | perf: ポジション更新ループを5分→1分に短縮 (PnL更新頻度改善) |

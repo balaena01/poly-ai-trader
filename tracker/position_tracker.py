@@ -221,6 +221,12 @@ class PositionTracker:
             self.positions[pos_id].needs_manual_sale = True
             self._save()
 
+    def dismiss_manual_sale(self, pos_id: str):
+        """手動売却アラートを解除"""
+        if pos_id in self.positions:
+            self.positions[pos_id].needs_manual_sale = False
+            self._save()
+
     def remove_position(self, pos_id: str):
         """ポジションを削除（キャンセル時用）"""
         if pos_id in self.positions:

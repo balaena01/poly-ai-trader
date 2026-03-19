@@ -81,19 +81,29 @@ class DashboardServer:
             "brier_stats": {},
         }
         
+        # 手動売却解除コールバック (orchestrator が登録)
+        self.on_dismiss_manual_sale = None
+
         self._setup_routes()
-    
+
     def _setup_routes(self):
         """ルート設定"""
-        
+
         @self.app.get("/", response_class=HTMLResponse)
         async def index():
             return self._get_dashboard_html()
-        
+
         @self.app.get("/api/state")
         async def get_state():
             return self.state
-        
+
+        @self.app.post("/api/dismiss_manual_sale/{pos_id}")
+        async def dismiss_manual_sale(pos_id: str):
+            if self.on_dismiss_manual_sale:
+                await self.on_dismiss_manual_sale(pos_id)
+                return {"ok": True}
+            return {"ok": False, "error": "callback not registered"}
+
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
             await self.manager.connect(websocket)
@@ -523,6 +533,30 @@ class DashboardServer:
             font-size: 9px;
             color: rgba(255,45,85,0.6);
             margin-left: auto;
+        }
+        .manual-sale-btn {
+            margin-left: 8px;
+            padding: 2px 8px;
+            font-family: var(--font-mono);
+            font-size: 9px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #ff2d55;
+            background: transparent;
+            border: 1px solid rgba(255,45,85,0.5);
+            border-radius: 2px;
+            cursor: pointer;
+            transition: background 0.15s, color 0.15s;
+            flex-shrink: 0;
+        }
+        .manual-sale-btn:hover {
+            background: rgba(255,45,85,0.15);
+        }
+        .manual-sale-btn.confirm {
+            color: #fff;
+            background: #ff2d55;
+            border-color: #ff2d55;
         }
 
         .pos-question {
@@ -1179,6 +1213,7 @@ class DashboardServer:
                 <span class="manual-sale-dot"></span>
                 <span class="manual-sale-text">Manual Sale Required</span>
                 <span class="manual-sale-sub">system close failed — sell on Polymarket</span>
+                <button class="manual-sale-btn" onclick="dismissManualSale('${pos.pos_id}', this)">✓ Dismiss</button>
             </div>` : '';
 
         return `<div class="${rowClass}">
@@ -1199,6 +1234,30 @@ class DashboardServer:
             </div>
             ${pnlHtml}
         </div>`;
+    }
+
+    // ── Dismiss Manual Sale ───────────────────────
+    function dismissManualSale(posId, btn) {
+        if (!btn.classList.contains('confirm')) {
+            // First click: ask for confirmation
+            btn.textContent = '? Confirm';
+            btn.classList.add('confirm');
+            // Reset if user doesn't confirm within 3s
+            setTimeout(() => {
+                if (btn.classList.contains('confirm')) {
+                    btn.textContent = '✓ Dismiss';
+                    btn.classList.remove('confirm');
+                }
+            }, 3000);
+            return;
+        }
+        // Second click: execute
+        btn.textContent = '…';
+        btn.disabled = true;
+        fetch(`/api/dismiss_manual_sale/${posId}`, { method: 'POST' })
+            .then(r => r.json())
+            .then(d => { if (!d.ok) { btn.textContent = '✗ Error'; btn.disabled = false; } })
+            .catch(() => { btn.textContent = '✗ Error'; btn.disabled = false; });
     }
 
     // ── Closed Positions ─────────────────────────
