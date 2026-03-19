@@ -1614,11 +1614,32 @@ class Orchestrator:
             pass  # ダッシュボード送信失敗でもメインループを止めない
 
     async def _handle_dismiss_manual_sale(self, pos_id: str):
-        """ダッシュボードからの手動売却アラート解除リクエスト"""
-        self.position_tracker.dismiss_manual_sale(pos_id)
-        print(f"✅ 手動売却アラート解除: {pos_id}")
+        """ダッシュボードからの手動売却アラート解除 → ポジションをCLOSEDにする"""
+        pos = self.position_tracker.positions.get(pos_id)
+        if not pos:
+            return
+
+        # 現在価格を CLOB から取得してPnL推定
+        yes_price = pos.entry_price  # フォールバック
+        try:
+            from client import PolyClient
+            _pc = PolyClient()
+            _pc.connect(read_only=True)
+            tok = pos.yes_token_id or pos.token_id
+            mid = _pc.get_midpoint(tok)
+            if mid is not None:
+                yes_price = mid
+        except Exception:
+            pass
+
+        estimated_pnl = pos.calculate_unrealized_pnl(yes_price)
+        self.position_tracker.close_position(pos_id, exit_price=yes_price, realized_pnl=estimated_pnl)
+        self.executed_markets.discard(pos.market_id)
+        print(f"✅ 手動売却確認・クローズ: {pos.question[:40]} (推定PnL: ${estimated_pnl:+.2f})")
+
         if self.dashboard:
             await self._push_positions_to_dashboard(self._last_markets)
+            await self._push_closed_positions_to_dashboard()
 
 
 # CLI用ヘルパー
