@@ -407,6 +407,69 @@ python main.py run --live
   - `analyst/llm_analyst.py` 側も `price_history` キー対応済み
   - 1440 本未満 (マーケット開始直後等) は price_history を送らない
 
+- [ ] **約定済みポジションの早期クローズ戦略 (条件付きHOLD)**
+
+  ### 背景・判断
+  現在は約定後は解決まで無条件HOLD (`enable_exit=False`)。
+  しかしエッジの源泉は「情報非対称性」であり、時間とともに市場に織り込まれる。
+  含み益があるうちに売ることで確定利益に変え、資金を次の機会に回すほうが期待値が高い局面がある。
+  一方で流動性が薄いマーケットでのスプレッドコストは大きく、無条件の途中売却は逆効果になる。
+  → **「条件付きHOLD」** が正解。
+
+  ### 実装する2つの早期クローズ条件
+
+  **① 利確 (Take Profit) — 残り日数考慮**
+  - 現状: `take_profit_pct=0.50` 固定、`enable_exit=False` で無効
+  - 新条件:
+    - 含み益 ≥ +40% **かつ** 解決まで14日超 → 売却
+    - 解決まで7日以内はスプレッドコストが割に合わないためHOLD継続
+  - 実装箇所: `_check_position_exits()` に `days_to_resolution` チェックを追加
+  - `enable_exit` フラグは廃止して常時有効化 (条件で制御するため)
+
+  **② LLM逆転クローズ — 根拠崩壊による損切り**
+  - 現状: 再分析でLLMが逆方向を出してもフィルド済みポジションは何もしない
+  - 新条件:
+    - 約定済み (FILLED) ポジションを持つマーケットも再分析対象にする
+    - LLMシグナルが逆方向 **かつ** edge > min_edge の強い逆シグナル → 売却
+    - 弱い逆シグナル (edge < min_edge) や信頼度不足はHOLD継続 (ノイズ扱い)
+  - 実装箇所: `_analyze_market()` の冒頭スキップロジックを変更
+    - 現在: `executed_markets` にありPENDINGでなければ即return
+    - 変更後: FILLEDポジションも分析を通過し、逆シグナル強ければ売却
+
+  ### 実装詳細
+
+  **`_analyze_market()` の変更:**
+  ```
+  if market_id in executed_markets:
+      pending → 既存通りエッジ再検証
+      filled  → _check_reversal_exit=True で分析継続 (逆シグナル確認のみ)
+      なし    → return (完了済み)
+  ```
+  分析後、`_check_reversal_exit=True` かつ逆方向エッジ十分なら `_exit_position()` を呼ぶ。
+
+  **`_check_position_exits()` の変更:**
+  ```
+  利確: pnl_pct >= 0.40 かつ days_to_resolution > 14 → 売却
+        days_to_resolution <= 7 → HOLD (スプレッドコスト回避)
+  損切り: pnl_pct <= -0.50 → 売却 (既存維持)
+  ```
+
+  **`_exit_position(pos, reason, current_price)` ヘルパー追加:**
+  - 売却注文発注 + position_tracker.close_position() + risk_manager更新 + executed_markets.discard()
+  - `_check_position_exits` と `_analyze_market` (逆転クローズ) の両方から呼ぶ
+
+  ### 設定変更
+  - `enable_exit` フラグ廃止 (常時有効、条件で制御)
+  - `take_profit_pct: float = 0.40` (50% → 40%に引き下げ)
+  - `take_profit_min_days: int = 14` 追加 (これより残り日数が多いときのみ利確)
+  - `stop_loss_pct: float = -0.50` 維持
+  - `llm_reversal_exit: bool = True` 追加 (LLM逆転クローズのON/OFF)
+
+  ### 注意
+  - LLM逆転クローズは再分析コスト (LLM呼び出し) が増える → 分析間隔が長い時間帯は許容範囲
+  - 売却注文は GTC (既存インフラ流用)
+  - スポーツ市場のポジションも逆転クローズ対象にする
+
 - [ ] **トリガー機構を廃止して即時GTC発注に移行**
 
   ### 問題

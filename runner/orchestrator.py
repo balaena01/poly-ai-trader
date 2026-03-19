@@ -98,9 +98,10 @@ class OrchestratorConfig:
     max_drawdown_pct: float = 0.15
     
     # 利確・損切り
-    enable_exit: bool = False       # 早期クローズ機能
-    take_profit_pct: float = 0.50   # 50% で利確
-    stop_loss_pct: float = -0.50    # -50% で損切り
+    take_profit_pct: float = 0.40       # 含み益 40% 超で利確
+    take_profit_min_days: int = 14      # 利確は解決まで14日超のときのみ (残り7日以内はHOLD)
+    stop_loss_pct: float = -0.50        # 含み損 -50% で損切り
+    llm_reversal_exit: bool = True      # LLM逆転シグナルでクローズ
     
     # ニュース
     fetch_news: bool = True
@@ -444,16 +445,27 @@ class Orchestrator:
     
     async def _analyze_market(self, market):
         """単一マーケット分析"""
-        # 既に実行済みならスキップ (PENDINGはエッジ再検証のため通過)
+        # 既に実行済みならスキップ (PENDING/FILLEDは再検証のため通過)
         market_id = getattr(market, 'market_id', None) or getattr(market, 'condition_id', str(id(market)))
+        _check_reversal_exit = False
         if market_id in self.executed_markets:
             pending_check = next(
                 (p for p in self.position_tracker.get_pending_positions() if p.market_id == market_id),
                 None,
             )
             if not pending_check:
-                return  # FILLED/CLOSED → スキップ
-            # PENDING → fall through for edge re-verification
+                # FILLED → LLM逆転クローズ確認のため分析継続
+                if not self.config.llm_reversal_exit:
+                    return
+                filled_check = next(
+                    (p for p in self.position_tracker.get_open_positions()
+                     if p.market_id == market_id and p.order_filled),
+                    None,
+                )
+                if not filled_check:
+                    return  # 完全終了済み → スキップ
+                _check_reversal_exit = True
+            # PENDING or FILLED(reversal) → fall through
 
         token_id = getattr(market, 'yes_token_id', None)
         # PENDING GTC注文があれば取得 (再分析でエッジ消失時にキャンセルするため)
@@ -482,8 +494,8 @@ class Orchestrator:
             print(f"   ⏭️ スキップ (期限 {days_left:.1f}日): {question[:40]}")
             return
 
-        # エクスポージャー上限チェック (PENDINGなし=新規。PENDINGありは再検証のため継続)
-        if not pending_pos:
+        # エクスポージャー上限チェック (新規のみ。PENDING/FILLEDは再検証のため継続)
+        if not pending_pos and not _check_reversal_exit:
             if not self.risk_manager.can_add_position(self.risk_manager.min_position * 3):
                 exposure_ratio = self.risk_manager.get_exposure_ratio()
                 print(f"   ⏭️ スキップ (エクスポージャー上限 {exposure_ratio:.0%}/{self.risk_manager.max_total_exposure:.0%}): {question[:40]}")
@@ -617,6 +629,28 @@ class Orchestrator:
                         print(f"   ⏸️ PENDING維持: {pending_pos.side}")
                 return
             
+            # ========== LLM逆転クローズチェック (FILLED ポジション) ==========
+            if _check_reversal_exit:
+                filled_pos = next(
+                    (p for p in self.position_tracker.get_open_positions()
+                     if p.market_id == market_id and p.order_filled),
+                    None,
+                )
+                if filled_pos:
+                    held_side = filled_pos.side.upper()
+                    signal_side = signal.action.value.upper()
+                    is_reversal = (
+                        (held_side == "BUY_YES" and signal_side == "BUY_NO")
+                        or (held_side == "BUY_NO" and signal_side == "BUY_YES")
+                    )
+                    if is_reversal and abs(signal.edge) >= self.config.min_edge and adjusted_confidence >= self.config.min_confidence:
+                        current_price = getattr(market, 'yes_price', 0.5)
+                        print(f"   🔄 LLM逆転クローズ: {held_side} → {signal_side} (edge={signal.edge:+.1%} conf={adjusted_confidence:.0%})")
+                        await self._exit_position(filled_pos, "llm_reversal", current_price)
+                    else:
+                        print(f"   ⏸️ HOLD継続: edge={signal.edge:+.1%} conf={adjusted_confidence:.0%} (逆転={is_reversal})")
+                return  # 逆転チェック完了、新規発注はしない
+
             # シグナルをログ
             self._log_event("signal_generated", {
                 "market_id": getattr(market, "condition_id", ""),
@@ -668,6 +702,45 @@ class Orchestrator:
             "side": pos.side,
             "reason": reason,
         })
+
+    async def _exit_position(self, pos, reason: str, current_price: float):
+        """ポジションを早期クローズ (利確 / 損切り / LLM逆転)"""
+        _label = {"take_profit": "💰 利確", "stop_loss": "🛑 損切り", "llm_reversal": "🔄 LLM逆転"}.get(reason, f"📤 {reason}")
+        print(f"\n{_label}: {pos.question[:40]}")
+
+        exit_side = "SELL_YES" if "YES" in pos.side.upper() else "SELL_NO"
+        sell_price = current_price if "YES" in exit_side else (1.0 - current_price)
+
+        try:
+            result = await self.executor.execute_order(
+                market_id=pos.market_id,
+                token_id=pos.token_id,
+                side=exit_side,
+                size=pos.size,
+                price=sell_price,
+            )
+            if result.success:
+                realized_pnl = pos.calculate_unrealized_pnl(current_price)
+                self.position_tracker.close_position(
+                    position_id=pos.id,
+                    exit_price=current_price,
+                    realized_pnl=realized_pnl,
+                )
+                if pos.market_id in self.risk_manager.open_positions:
+                    del self.risk_manager.open_positions[pos.market_id]
+                self.executed_markets.discard(pos.market_id)
+                self._log_event("position_exited", {
+                    "market_id": pos.market_id,
+                    "question": pos.question[:60],
+                    "reason": reason,
+                    "exit_price": round(current_price, 6),
+                    "realized_pnl": round(realized_pnl, 4),
+                })
+                print(f"   ✅ クローズ完了: ${realized_pnl:+.2f}")
+            else:
+                print(f"   ❌ クローズ失敗: {result.message}")
+        except Exception as e:
+            print(f"   ❌ クローズエラー: {e}")
 
     async def _execute_order(self, market, signal, size: float, pending_pos=None):
         """GTC注文を即時発注"""
@@ -1014,77 +1087,52 @@ class Orchestrator:
             pass
     
     async def _check_position_exits(self, markets: List):
-        """利確・損切りをチェック"""
-        # 無効なら SKIP
-        if not self.config.enable_exit:
-            return
-        
+        """利確・損切りをチェック (常時有効、条件で制御)"""
         open_positions = self.position_tracker.get_open_positions()
-        
         if not open_positions:
             return
-        
-        # 現在価格を収集
+
+        # 現在価格 / end_date を market_id → value で収集
         current_prices = {}
+        end_dates = {}
         for market in markets:
             market_id = getattr(market, 'market_id', None) or getattr(market, 'condition_id', None)
             yes_price = getattr(market, 'yes_price', None)
-            if market_id and yes_price:
-                current_prices[market_id] = yes_price
-        
-        # 利確・損切りチェック
+            end_date = getattr(market, 'end_date', None)
+            if market_id:
+                if yes_price:
+                    current_prices[market_id] = yes_price
+                if end_date:
+                    end_dates[market_id] = end_date
+
+        # 利確・損切り候補を取得
         exit_signals = self.position_tracker.check_exit_conditions(
             current_prices=current_prices,
             take_profit_pct=self.config.take_profit_pct,
             stop_loss_pct=self.config.stop_loss_pct,
         )
-        
+
+        now = datetime.now(timezone.utc)
         for exit_signal in exit_signals:
             pos = exit_signal["position"]
-            action = exit_signal["action"]
             reason = exit_signal["reason"]
             pnl_pct = exit_signal["pnl_pct"]
-            
-            emoji = "💰" if reason == "take_profit" else "🛑"
-            reason_jp = "利確" if reason == "take_profit" else "損切り"
-            
-            print(f"\n{emoji} {reason_jp}シグナル!")
-            print(f"   {pos.question[:40]}")
-            print(f"   含み損益: {pnl_pct:+.1%}")
-            
-            # 売却実行
             yes_price = current_prices.get(pos.market_id, 0.5)
-            
-            try:
-                result = await self.executor.execute_order(
-                    market_id=pos.market_id,
-                    token_id=pos.token_id,
-                    side=action,
-                    size=pos.size,
-                    price=yes_price if "YES" in action else (1 - yes_price),
-                )
-                
-                if result.success:
-                    realized_pnl = pos.calculate_unrealized_pnl(yes_price)
-                    self.position_tracker.close_position(
-                        position_id=pos.id,
-                        exit_price=yes_price,
-                        realized_pnl=realized_pnl,
-                    )
 
-                    # RiskManager からオープンポジション削除
-                    if pos.market_id in self.risk_manager.open_positions:
-                        del self.risk_manager.open_positions[pos.market_id]
+            print(f"\n{'💰' if reason == 'take_profit' else '🛑'} {'利確' if reason == 'take_profit' else '損切り'}候補: {pos.question[:40]} ({pnl_pct:+.1%})")
 
-                    # executed_markets から削除 → 再エントリーを許可
-                    self.executed_markets.discard(pos.market_id)
+            # 利確: 解決まで14日超のときのみ実行 (残り日数が少ないとスプレッドコストが割に合わない)
+            if reason == "take_profit":
+                end_date = end_dates.get(pos.market_id)
+                if end_date:
+                    if end_date.tzinfo is None:
+                        end_date = end_date.replace(tzinfo=timezone.utc)
+                    days_left = (end_date - now).total_seconds() / 86400
+                    if days_left <= self.config.take_profit_min_days:
+                        print(f"   ⏸️ 利確スキップ (解決まで{days_left:.1f}日 ≤ {self.config.take_profit_min_days}日、HOLD継続)")
+                        continue
 
-                    print(f"   ✅ {reason_jp}完了: ${realized_pnl:+.2f}")
-                else:
-                    print(f"   ❌ {reason_jp}失敗: {result.message}")
-                    
-            except Exception as e:
-                print(f"   ❌ エラー: {e}")
+            await self._exit_position(pos, reason, yes_price)
     
     def _get_analysis_interval(self, markets: List) -> int:
         """分析間隔を決定 (分)"""
@@ -1528,9 +1576,10 @@ async def run_orchestrator(
     fetch_news: bool = True,
     dashboard: bool = True,
     dashboard_port: int = 8080,
-    enable_exit: bool = False,
-    take_profit_pct: float = 0.50,
+    take_profit_pct: float = 0.40,
     stop_loss_pct: float = -0.50,
+    take_profit_min_days: int = 14,
+    llm_reversal_exit: bool = True,
     auto_retrain: bool = True,
     retrain_threshold: int = 20,
     min_liquidity: float = 10_000,
@@ -1545,9 +1594,10 @@ async def run_orchestrator(
         fetch_news=fetch_news,
         dashboard=dashboard,
         dashboard_port=dashboard_port,
-        enable_exit=enable_exit,
         take_profit_pct=take_profit_pct,
         stop_loss_pct=stop_loss_pct,
+        take_profit_min_days=take_profit_min_days,
+        llm_reversal_exit=llm_reversal_exit,
         auto_retrain=auto_retrain,
         retrain_threshold=retrain_threshold,
         min_liquidity=min_liquidity,
