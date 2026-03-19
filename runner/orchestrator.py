@@ -107,6 +107,9 @@ class OrchestratorConfig:
     collapse_threshold: float = 0.88        # YES確率がこれ以上 → BUY_NO を損切り (逆方向も対称)
     stop_loss_near_expiry_days: int = 7     # 残りN日以内かつ含み損が閾値以下なら損切り
     stop_loss_near_expiry_pct: float = -0.40  # 近解決時の含み損閾値
+
+    # エッジ消失利確 (㉒)
+    edge_take_profit_threshold: float = 0.05  # エッジがこれ以下になったら利確
     
     # ニュース
     fetch_news: bool = True
@@ -190,6 +193,9 @@ class Orchestrator:
         # ML再学習管理
         self._resolved_since_last_training: int = 0
         self._retraining: bool = False
+
+        # 最新シグナルキャッシュ (エッジ消失利確に使用)
+        self._last_signals: Dict = {}  # market_id → Signal
 
         # 構造化ログ (data/trade_log.jsonl)
         _log_dir = Path(__file__).parent.parent / "data"
@@ -563,9 +569,12 @@ class Orchestrator:
             if not signal:
                 print(f"   ⚪ シグナルなし")
                 return
-            
+
+            # 最新シグナルをキャッシュ (エッジ消失利確に使用)
+            self._last_signals[market_id] = signal
+
             self.stats["signals_generated"] += 1
-            
+
             print(f"   予測: {signal.final_probability:.1%} | エッジ: {signal.edge:+.1%}")
             
             # ダッシュボード更新
@@ -816,6 +825,7 @@ class Orchestrator:
                     size=size,
                     order_id=result.order_id,
                     order_filled=False,
+                    entry_edge=signal.edge,
                 )
 
                 self.risk_manager.add_pending_exposure(size)
@@ -1178,6 +1188,8 @@ class Orchestrator:
             stop_loss_near_expiry_days=self.config.stop_loss_near_expiry_days,
             stop_loss_near_expiry_pct=self.config.stop_loss_near_expiry_pct,
             end_dates=end_dates,
+            last_signals=self._last_signals,
+            edge_take_profit_threshold=self.config.edge_take_profit_threshold,
         )
 
         now = datetime.now(timezone.utc)

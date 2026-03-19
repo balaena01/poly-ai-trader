@@ -8,8 +8,9 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | fix: exit_signals ループの堅牢性改善 (needs_manual_sale スキップ + 各イテレーションのtry/except) |
-| `prev` | fix: 売却時に実トークン残高を取得してsellサイズを補正 (部分約定対応) |
+| (最新) | feat: ㉒ 利確再設計 — エッジ消失利確(entry_edge + _last_signals キャッシュ) |
+| `prev` | feat: ㉑ 損切りロジック再設計 — 確率崩壊ストップ(88%) + 近解決×含み損(-40%/7日) |
+| `prev` | fix: exit_signals ループの堅牢性改善 (needs_manual_sale スキップ + 各イテレーションのtry/except) |
 | `18c9536` | fix: GTC売り注文を即CLOSEDにせずPENDING_SELL状態で約定確認後にCLOSED |
 | `5093cf3` | feat: 手動売却アラートの解除ボタン実装 (2クリック確認 + dismiss_manual_sale API) |
 | `0838cf6` | feat: LLMにスポーツ市場判定 (is_sport) を追加し二重チェックを実装 |
@@ -663,7 +664,7 @@ python main.py run --live
     - LIVE 60分超 → 自動キャンセル → ACTIVE 復帰 → 次ループで再判断
   - `_check_position_exits()`: `pending_sell_order_id` があるポジションをスキップ (再発注防止)
 
-- [ ] **㉑ 損切りロジックの再設計 — 価格ベース→確率崩壊ベース**
+- [x] **㉑ 損切りロジックの再設計 — 価格ベース→確率崩壊ベース**
 
   ### 問題 (トレーダー③の指摘)
   現在の `stop_loss_pct = -0.50` は「価格が-50%動いたら売る」という設計。
@@ -712,7 +713,7 @@ python main.py run --live
     - 確率崩壊ストップ = 「市場が圧倒的多数決を出した」= 強制撤退
     - 両方とも GTC SELL なので流動性リスクは残る
 
-- [ ] **㉒ 利確トリガーの再設計 — 価格上昇%→エッジ消失ベース**
+- [x] **㉒ 利確トリガーの再設計 — 価格上昇%→エッジ消失ベース**
 
   ### 問題 (トレーダー⑨の指摘)
   現在の `take_profit_pct = 0.40` は「含み益+40%で売る」という設計。

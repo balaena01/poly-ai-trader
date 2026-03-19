@@ -47,6 +47,9 @@ class Position:
     # 手動売却フラグ (トークン未保有等でシステムクローズ不可)
     needs_manual_sale: bool = False
 
+    # エントリー時の LLM エッジ (エッジ消失利確に使用)
+    entry_edge: Optional[float] = None
+
     # 解決後
     exit_price: Optional[float] = None
     resolved_at: Optional[datetime] = None
@@ -97,6 +100,7 @@ class Position:
             "pending_sell_order_id": self.pending_sell_order_id,
             "pending_sell_price": self.pending_sell_price,
             "needs_manual_sale": self.needs_manual_sale,
+            "entry_edge": self.entry_edge,
             "exit_price": self.exit_price,
             "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
             "pnl": self.pnl,
@@ -120,6 +124,7 @@ class Position:
             pending_sell_order_id=data.get("pending_sell_order_id"),
             pending_sell_price=data.get("pending_sell_price"),
             needs_manual_sale=data.get("needs_manual_sale", False),
+            entry_edge=data.get("entry_edge"),
             exit_price=data.get("exit_price"),
             resolved_at=datetime.fromisoformat(data["resolved_at"]) if data.get("resolved_at") else None,
             pnl=data.get("pnl", 0.0),
@@ -146,6 +151,7 @@ class PositionTracker:
         order_id: Optional[str] = None,
         order_filled: bool = True,
         yes_token_id: Optional[str] = None,
+        entry_edge: Optional[float] = None,
     ) -> Position:
         """トレード記録"""
         import uuid
@@ -163,6 +169,7 @@ class PositionTracker:
             size=size,
             order_id=order_id,
             order_filled=order_filled,
+            entry_edge=entry_edge,
         )
         
         self.positions[pos_id] = position
@@ -292,6 +299,8 @@ class PositionTracker:
         stop_loss_near_expiry_days: int = 7,    # 近解決損切り: 残りN日以内
         stop_loss_near_expiry_pct: float = -0.40,  # 近解決損切り: 含み損閾値
         end_dates: Dict[str, any] = None,       # market_id -> end_date (近解決チェック用)
+        last_signals: Dict[str, any] = None,    # market_id -> Signal (エッジ消失チェック用)
+        edge_take_profit_threshold: float = 0.05,  # エッジがこれ以下で利確
     ) -> List[Dict]:
         """
         利確・損切り条件をチェック
@@ -309,6 +318,7 @@ class PositionTracker:
         exit_signals = []
         now = datetime.now(timezone.utc)
         end_dates = end_dates or {}
+        last_signals = last_signals or {}
 
         for pos in self.get_open_positions():
             if pos.needs_manual_sale:
@@ -355,7 +365,21 @@ class PositionTracker:
                     })
                     continue
 
-            # ── 3. 利確 (価格ベース) ──────────────────────────────────────────
+            # ── 3. エッジ消失利確 (メイン) ───────────────────────────────────
+            # entry_edge が記録されていて、最新シグナルのエッジが閾値以下になったら利確
+            if pos.entry_edge is not None:
+                sig = last_signals.get(pos.market_id)
+                if sig is not None:
+                    current_edge = abs(getattr(sig, 'edge', 1.0))
+                    if current_edge < edge_take_profit_threshold:
+                        exit_signals.append({
+                            "position": pos, "action": action, "reason": "take_profit",
+                            "pnl_pct": pnl_pct,
+                            "detail": f"エッジ消失 entry_edge={pos.entry_edge:+.1%} → current_edge={current_edge:+.1%}",
+                        })
+                        continue
+
+            # ── 4. 利確 (価格ベース・セカンダリ) ─────────────────────────────
             if pnl_pct >= take_profit_pct:
                 exit_signals.append({
                     "position": pos, "action": action, "reason": "take_profit",
@@ -363,7 +387,7 @@ class PositionTracker:
                 })
                 continue
 
-            # ── 4. 損切り (価格ベース・最終保険) ─────────────────────────────
+            # ── 5. 損切り (価格ベース・最終保険) ─────────────────────────────
             if pnl_pct <= stop_loss_pct:
                 exit_signals.append({
                     "position": pos, "action": action, "reason": "stop_loss",
