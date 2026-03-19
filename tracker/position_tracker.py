@@ -285,49 +285,91 @@ class PositionTracker:
     
     def check_exit_conditions(
         self,
-        current_prices: Dict[str, float],  # market_id -> yes_price
-        take_profit_pct: float = 0.20,     # 20% で利確
-        stop_loss_pct: float = -0.30,      # -30% で損切り
+        current_prices: Dict[str, float],       # market_id -> yes_price
+        take_profit_pct: float = 0.40,
+        stop_loss_pct: float = -0.80,           # 価格ベース損切り (最終保険)
+        collapse_threshold: float = 0.88,       # 確率崩壊ストップ
+        stop_loss_near_expiry_days: int = 7,    # 近解決損切り: 残りN日以内
+        stop_loss_near_expiry_pct: float = -0.40,  # 近解決損切り: 含み損閾値
+        end_dates: Dict[str, any] = None,       # market_id -> end_date (近解決チェック用)
     ) -> List[Dict]:
         """
         利確・損切り条件をチェック
-        
+
+        損切り優先度:
+          1. 確率崩壊ストップ: market が圧倒的多数決を出した (thesis 崩壊)
+          2. 近解決 × 含み損: 残り日数少なく回復見込みなし
+          3. 価格ベース損切り: ほぼ全損時の最終保険
+          ※ LLM逆転クローズは orchestrator 側で別途処理
+
         Returns:
-            [{"position": Position, "action": "SELL_YES"|"SELL_NO", "reason": str, "pnl_pct": float}]
+            [{"position": Position, "action": str, "reason": str, "pnl_pct": float, "detail": str}]
         """
+        from datetime import datetime, timezone
         exit_signals = []
-        
+        now = datetime.now(timezone.utc)
+        end_dates = end_dates or {}
+
         for pos in self.get_open_positions():
             if pos.needs_manual_sale:
-                continue  # 手動売却フラグ付き = システムクローズ不可 → スキップ
+                continue
             if pos.pending_sell_order_id:
-                continue  # 売り注文約定待ち中 → 再発注しない
+                continue
             yes_price = current_prices.get(pos.market_id)
             if yes_price is None:
                 continue
 
             pnl_pct = pos.get_unrealized_pnl_pct(yes_price)
-            
-            # 利確チェック
+            action = "SELL_YES" if pos.side.upper() == "BUY_YES" else "SELL_NO"
+            is_no = pos.side.upper() == "BUY_NO"
+
+            # ── 1. 確率崩壊ストップ ───────────────────────────────────────────
+            # BUY_NO: YES確率 >= collapse_threshold → YES がほぼ確定 → NO thesis 崩壊
+            # BUY_YES: YES確率 <= (1 - collapse_threshold) → NO がほぼ確定
+            if is_no and yes_price >= collapse_threshold:
+                exit_signals.append({
+                    "position": pos, "action": action, "reason": "collapse_stop",
+                    "pnl_pct": pnl_pct,
+                    "detail": f"YES確率{yes_price:.0%} ≥ 崩壊閾値{collapse_threshold:.0%}",
+                })
+                continue
+            if not is_no and yes_price <= (1.0 - collapse_threshold):
+                exit_signals.append({
+                    "position": pos, "action": action, "reason": "collapse_stop",
+                    "pnl_pct": pnl_pct,
+                    "detail": f"YES確率{yes_price:.0%} ≤ {1-collapse_threshold:.0%} (NO崩壊)",
+                })
+                continue
+
+            # ── 2. 近解決 × 含み損 ────────────────────────────────────────────
+            end_date = end_dates.get(pos.market_id)
+            if end_date is not None:
+                if end_date.tzinfo is None:
+                    end_date = end_date.replace(tzinfo=timezone.utc)
+                days_left = (end_date - now).total_seconds() / 86400
+                if days_left <= stop_loss_near_expiry_days and pnl_pct <= stop_loss_near_expiry_pct:
+                    exit_signals.append({
+                        "position": pos, "action": action, "reason": "near_expiry_stop",
+                        "pnl_pct": pnl_pct,
+                        "detail": f"残{days_left:.1f}日 ≤ {stop_loss_near_expiry_days}日 かつ pnl{pnl_pct:.0%} ≤ {stop_loss_near_expiry_pct:.0%}",
+                    })
+                    continue
+
+            # ── 3. 利確 (価格ベース) ──────────────────────────────────────────
             if pnl_pct >= take_profit_pct:
-                action = "SELL_YES" if pos.side.upper() == "BUY_YES" else "SELL_NO"
                 exit_signals.append({
-                    "position": pos,
-                    "action": action,
-                    "reason": "take_profit",
-                    "pnl_pct": pnl_pct,
+                    "position": pos, "action": action, "reason": "take_profit",
+                    "pnl_pct": pnl_pct, "detail": f"pnl{pnl_pct:+.0%}",
                 })
-            
-            # 損切りチェック
-            elif pnl_pct <= stop_loss_pct:
-                action = "SELL_YES" if pos.side.upper() == "BUY_YES" else "SELL_NO"
+                continue
+
+            # ── 4. 損切り (価格ベース・最終保険) ─────────────────────────────
+            if pnl_pct <= stop_loss_pct:
                 exit_signals.append({
-                    "position": pos,
-                    "action": action,
-                    "reason": "stop_loss",
-                    "pnl_pct": pnl_pct,
+                    "position": pos, "action": action, "reason": "stop_loss",
+                    "pnl_pct": pnl_pct, "detail": f"pnl{pnl_pct:+.0%} ≤ {stop_loss_pct:.0%}",
                 })
-        
+
         return exit_signals
     
     def close_position(

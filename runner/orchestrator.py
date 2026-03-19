@@ -98,10 +98,15 @@ class OrchestratorConfig:
     max_drawdown_pct: float = 0.15
     
     # 利確・損切り
-    take_profit_pct: float = 0.40       # 含み益 40% 超で利確
-    take_profit_min_days: int = 14      # 利確は解決まで14日超のときのみ (残り7日以内はHOLD)
-    stop_loss_pct: float = -0.50        # 含み損 -50% で損切り
-    llm_reversal_exit: bool = True      # LLM逆転シグナルでクローズ
+    take_profit_pct: float = 0.40           # 含み益 40% 超で利確 (価格ベース・セカンダリ)
+    take_profit_min_days: int = 14          # 利確は解決まで14日超のときのみ
+    stop_loss_pct: float = -0.80            # 価格ベース損切り (ほぼ全損時の最終保険)
+    llm_reversal_exit: bool = True          # LLM逆転シグナルでクローズ
+
+    # 確率崩壊ストップ (㉑)
+    collapse_threshold: float = 0.88        # YES確率がこれ以上 → BUY_NO を損切り (逆方向も対称)
+    stop_loss_near_expiry_days: int = 7     # 残りN日以内かつ含み損が閾値以下なら損切り
+    stop_loss_near_expiry_pct: float = -0.40  # 近解決時の含み損閾値
     
     # ニュース
     fetch_news: bool = True
@@ -1169,6 +1174,10 @@ class Orchestrator:
             current_prices=current_prices,
             take_profit_pct=self.config.take_profit_pct,
             stop_loss_pct=self.config.stop_loss_pct,
+            collapse_threshold=self.config.collapse_threshold,
+            stop_loss_near_expiry_days=self.config.stop_loss_near_expiry_days,
+            stop_loss_near_expiry_pct=self.config.stop_loss_near_expiry_pct,
+            end_dates=end_dates,
         )
 
         now = datetime.now(timezone.utc)
@@ -1196,7 +1205,10 @@ class Orchestrator:
             pnl_pct = exit_signal["pnl_pct"]
             yes_price = current_prices.get(pos.market_id, 0.5)
 
-            print(f"\n{'💰' if reason == 'take_profit' else '🛑'} {'利確' if reason == 'take_profit' else '損切り'}候補: {pos.question[:40]} ({pnl_pct:+.1%})")
+            _icons = {"take_profit": "💰", "collapse_stop": "💥", "near_expiry_stop": "⏰", "stop_loss": "🛑"}
+            _labels = {"take_profit": "利確", "collapse_stop": "確率崩壊ストップ", "near_expiry_stop": "近解決損切り", "stop_loss": "損切り"}
+            detail = exit_signal.get("detail", "")
+            print(f"\n{_icons.get(reason,'🛑')} {_labels.get(reason,'損切り')}候補: {pos.question[:40]} ({pnl_pct:+.1%}) {detail}")
 
             # 利確: 解決まで14日超のときのみ実行 (残り日数が少ないとスプレッドコストが割に合わない)
             if reason == "take_profit":
