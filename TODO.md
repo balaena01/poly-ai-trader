@@ -407,6 +407,38 @@ python main.py run --live
   - `analyst/llm_analyst.py` 側も `price_history` キー対応済み
   - 1440 本未満 (マーケット開始直後等) は price_history を送らない
 
+- [ ] **トリガー機構を廃止して即時GTC発注に移行**
+
+  ### 問題
+  現在のトリガーは `BUY_YES: price <= target_price (= 分析時現在価格)` で発火する。
+  LLMが正しい（= 市場が価格を上げる）ときほどトリガーが発火せず期限切れになる逆説がある。
+  予測市場はニュース駆動で情報優位の窓が短いため、発火遅延はエッジの損失に直結する。
+
+  ### 方針: 分析直後に即 GTC 指値発注
+  - 分析完了 → 即 `client.buy()` で CLOB に GTC 指値を投げる
+  - 指値価格 = 分析時の YES 価格 (現状と同じ、追いかけない)
+  - 注文は CLOB のブックに乗り、カウンターパーティが来れば約定
+  - **エッジ消失時キャンセル**: 次サイクルの再分析でエッジが `min_edge * 0.5` を下回ったら
+    `client.cancel_order(order_id)` を呼んでキャンセル
+  - 60分タイムアウト自動キャンセルは現状通り維持
+
+  ### 削除するもの
+  - `TriggerCondition` クラス
+  - `active_triggers` dict
+  - `_set_trigger()` / `_check_triggers()` / `_execute_trigger()`
+  - WebSocket の `_check_triggers` 呼び出し
+
+  ### 追加・変更するもの
+  - `_analyze_market()` 内で直接 `executor.execute_order()` を呼ぶ
+  - `Position` に `order_id` が既にあるので、キャンセルは `client.cancel_order(order_id)` で可能
+  - 再分析時に既存ポジション (PENDING) を検出 → エッジ再検証 → 消失でキャンセル
+  - `_check_pending_gtc_orders()` の既存 60分キャンセルロジックはそのまま流用
+
+  ### 注意
+  - 最小注文サイズチェック (5 tokens) は発注前に必須 (既存ロジック流用)
+  - エクスポージャーチェックも発注前に必須 (既存ロジック流用)
+  - `executed_markets` の管理は現状通り (再エントリー防止)
+
 - [ ] **同一イベントへの集中リスク対策 (相関グループ管理)**
   - 現状: "GTA VI before X?" 系マーケットが複数トリガーに並ぶと実質1ポジション分のリスクになる
   - 対策案: マーケットの `question` からイベントキーワードを抽出し、同一グループへのエクスポージャーをグループ単位で上限管理
