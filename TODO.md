@@ -663,6 +663,120 @@ python main.py run --live
     - LIVE 60分超 → 自動キャンセル → ACTIVE 復帰 → 次ループで再判断
   - `_check_position_exits()`: `pending_sell_order_id` があるポジションをスキップ (再発注防止)
 
+- [ ] **㉑ 損切りロジックの再設計 — 価格ベース→確率崩壊ベース**
+
+  ### 問題 (トレーダー③の指摘)
+  現在の `stop_loss_pct = -0.50` は「価格が-50%動いたら売る」という設計。
+  予測市場の本質は **「自分の確率推定 vs 市場価格の乖離」** であって価格変動幅ではない。
+  - BUY_NO at 0.29 (YES=0.71)。YES が 0.87 になっても「NO がまだ勝つ」と信じるなら持ち続けるべき
+  - 逆に YES が 0.72 に微動しただけでも「LLM が完全に間違っていた」なら即座に撤退すべき
+  - しかも GTC 指値 → 相手がいないと刺さらない。深いドローダウン時は流動性も薄い
+  - 二値解決なので -50% で止めても -100% になる可能性は排除できない
+
+  ### 新しい損切り設計
+
+  **① 確率崩壊ストップ (メイン)**
+  - BUY_NO ポジション: `current_yes_price >= collapse_threshold (例: 0.88)` → ほぼ YES 確定 → 損切り
+  - BUY_YES ポジション: `current_yes_price <= (1 - collapse_threshold)` → ほぼ NO 確定 → 損切り
+  - 根拠: 市場参加者の集合知が一方に収束したとき「自分の thesis が崩壊した」と判断
+  - デフォルト閾値: `collapse_threshold = 0.88`
+
+  **② 残り日数 × 含み損 複合チェック (セーフティネット)**
+  - `days_to_resolution <= 7 AND pnl_pct <= -0.40` → 時間切れ前の傷口縮小
+  - 解決まで1週間以内かつ-40%なら回復見込みが薄い → 撤退
+
+  **③ 価格ベース損切りは撤廃 or 大幅緩和**
+  - `stop_loss_pct = -0.50` → 撤廃、または `-0.80` に緩和 (ほぼ全損時の最終保険のみ)
+  - LLM逆転クローズ (`llm_reversal_exit`) が「根拠崩壊」の主要な損切りとして機能
+
+  ### 設定値追加
+  ```python
+  # OrchestratorConfig に追加
+  collapse_threshold: float = 0.88   # 確率崩壊ストップ (YES確率がここを超えたらBUY_NOを損切り)
+  stop_loss_near_expiry_days: int = 7   # 残りN日以内
+  stop_loss_near_expiry_pct: float = -0.40  # 残り日数少なく含み損がここ以下なら損切り
+  ```
+
+  ### 実装箇所
+  - `tracker/position_tracker.py` `check_exit_conditions()`:
+    - 確率崩壊チェック追加 (BUY_NO: yes_price >= collapse_threshold)
+    - 近解決 × 含み損チェック追加
+    - 価格ベース stop_loss_pct は緩和または削除
+  - `runner/orchestrator.py` `_check_position_exits()`:
+    - collapse_threshold を config から渡す
+    - near_expiry 損切りのログを追加
+
+  ### 注意
+  - LLM逆転クローズ (既存) との棲み分け:
+    - LLM逆転 = 「自分の分析が変わった」= 根拠消滅による売却
+    - 確率崩壊ストップ = 「市場が圧倒的多数決を出した」= 強制撤退
+    - 両方とも GTC SELL なので流動性リスクは残る
+
+- [ ] **㉒ 利確トリガーの再設計 — 価格上昇%→エッジ消失ベース**
+
+  ### 問題 (トレーダー⑨の指摘)
+  現在の `take_profit_pct = 0.40` は「含み益+40%で売る」という設計。
+  しかし予測市場の利確の本質は **「エッジが消えた（市場が自分の thesis を織り込んだ）ときに売る」**。
+  - LLM が「NO確率 = 85%」と予測、市場が「NO = 71%」→ エッジ = +14%。持ち続けるべき。
+  - 市場が「NO = 83%」まで動く → エッジ = +2%。もはや優位性なし → 売るべき。
+  - 価格が+40%上昇したかどうかは副次的情報で、エッジが残っているかどうかが本質。
+
+  ### 新しい利確設計
+
+  **① エッジ消失利確 (メイン)**
+  - ポジション開始時のエッジ (`entry_edge`) を Position に記録
+  - 各ループで最新 LLM シグナルのエッジを確認
+  - `current_edge < edge_take_profit_threshold (例: 0.05)` → 市場が thesis を織り込んだ → 利確
+  - 前提: 分析ループで `market_id → 最新シグナル` のキャッシュを保持
+
+  **② 価格ベース利確は残す (セカンダリ・大きく動いた時の保険)**
+  - `pnl_pct >= take_profit_pct (0.40)` は維持
+  - 理由: LLM再分析の間隔が長い場合、価格が大きく動いてもエッジ更新が遅れる可能性
+  - ① と ② の OR 条件で利確
+
+  ### Position への entry_edge 追加
+  ```python
+  # Position dataclass に追加
+  entry_edge: Optional[float] = None  # エントリー時の LLM エッジ (例: +0.14)
+  ```
+  - `record_trade()` 呼び出し時に signal.edge を渡して保存
+  - from_dict / to_dict に追加
+
+  ### LLMシグナルキャッシュ
+  ```python
+  # Orchestrator に追加
+  self._last_signals: Dict[str, Signal] = {}  # market_id → 最新シグナル
+  ```
+  - `_analyze_market()` で LLM シグナル生成後に `self._last_signals[market_id] = signal` で更新
+  - `_check_position_exits()` でポジションの market_id に対応するシグナルを参照
+
+  ### 実装箇所
+  - `tracker/position_tracker.py`:
+    - `Position` に `entry_edge: Optional[float]` 追加
+    - `record_trade()` の引数に `entry_edge` 追加
+    - `check_exit_conditions()` の引数に `last_signals: Dict[str, Any]` を追加し、エッジ消失チェックを追加
+  - `runner/orchestrator.py`:
+    - `self._last_signals = {}` を `__init__` に追加
+    - `_analyze_market()` でシグナル生成後にキャッシュ更新
+    - `_check_position_exits()` で `_last_signals` を渡す
+    - 既存のポジション発注時 (`_execute_order`) で `entry_edge=signal.edge` を記録
+
+  ### 設定値追加
+  ```python
+  # OrchestratorConfig に追加
+  edge_take_profit_threshold: float = 0.05  # エッジがこれ以下になったら利確
+  ```
+
+  ### ログ出力
+  ```
+  💰 エッジ消失利確: Will Solana reach $100 in March? (entry_edge=+14.2% → current_edge=+2.1%)
+  ```
+
+  ### 注意
+  - LLM 再分析間隔 (最大数時間) の間はキャッシュが古くなる → 価格ベース利確がバックアップとして機能
+  - スキャン対象外のポジションは `_last_signals` に載らない → 価格ベース利確のみ適用
+  - entry_edge が null の既存ポジションはエッジ消失チェックをスキップ (価格ベースのみ)
+
 - [ ] **同一イベントへの集中リスク対策 (相関グループ管理)**
   - 現状: "GTA VI before X?" 系マーケットが複数トリガーに並ぶと実質1ポジション分のリスクになる
   - 対策案: マーケットの `question` からイベントキーワードを抽出し、同一グループへのエクスポージャーをグループ単位で上限管理
