@@ -778,6 +778,84 @@ python main.py run --live
   - スキャン対象外のポジションは `_last_signals` に載らない → 価格ベース利確のみ適用
   - entry_edge が null の既存ポジションはエッジ消失チェックをスキップ (価格ベースのみ)
 
+- [ ] **㉓ LLM へのパフォーマンスフィードバック — 自己学習コンテキスト注入**
+
+  ### 問題
+  現状 LLM は各マーケットの分析ごとに「同マーケットの前回判断」(`previous_judgment`) しか受け取らない。
+  自分の過去の予測がどう解決したか、どんな傾向でミスしているかを知らないため、
+  同じバイアスを繰り返しても修正できない。
+  - Brier スコアはポジションサイジングには使われているが、LLM の推論には未フィードバック
+  - 「暗号資産系を楽観視しすぎる」「政治系は堅実」といったパターンを LLM 自身が把握できていない
+
+  ### 追加するフィードバック情報 (LLM prompt に context として注入)
+
+  **① 総合トラックレコード (直近N件)**
+  ```
+  あなたの過去30件の予測実績:
+  - 勝率: 63% (19勝/11敗)
+  - 平均PnL: +$2.1/件
+  - 予測確率の平均乖離: +8% (市場より強気傾向)
+  ```
+
+  **② カテゴリ別精度**
+  ```
+  カテゴリ別:
+  - 暗号資産: 勝率40% (過信傾向 +15%) ← 注意
+  - 地政学: 勝率70% (堅実)
+  - 選挙・政治: 勝率65%
+  ```
+  カテゴリは `question` のキーワードから簡易分類 (crypto / geopolitical / election / other)
+
+  **③ 直近の外れパターン (最大5件)**
+  ```
+  直近の外れ予測:
+  - "Will BTC reach $100k in March?" BUY_YES (予測70%) → 負け (NO確定)
+  - "Sharks vs. Oilers" BUY_YES (予測60%) → 負け
+  ```
+  連続ミスや特定パターンへの過集中を自己認識させる
+
+  ### データソース
+  - `data/positions.json`: 解決済みポジション (`status: resolved/closed`) から勝敗・PnL・サイドを集計
+  - `data/trade_log.jsonl`: 補助 (重複する場合は positions.json を優先)
+
+  ### カテゴリ分類ロジック
+  ```python
+  def _classify_market(question: str) -> str:
+      q = question.lower()
+      if any(k in q for k in ["btc", "bitcoin", "eth", "crypto", "solana", "doge"]): return "crypto"
+      if any(k in q for k in ["election", "president", "prime minister", "vote", "poll"]): return "election"
+      if any(k in q for k in ["war", "ceasefire", "troops", "military", "russia", "ukraine", "israel"]): return "geopolitical"
+      return "other"
+  ```
+
+  ### 実装箇所
+  - `analyst/llm_analyst.py`:
+    - `analyze()` の引数に `performance_context: str = ""` を追加
+    - システムプロンプトまたはユーザープロンプトの冒頭に注入
+  - `runner/orchestrator.py`:
+    - `_build_performance_context()` メソッドを新規追加
+      - `position_tracker.get_closed_positions()` から直近30件を集計
+      - 総合勝率・平均PnL・カテゴリ別精度・直近外れ5件を文字列生成
+    - `_analyze_market()` で `performance_context=self._build_performance_context()` を渡す
+    - パフォーマンス context はキャッシュして毎サイクル1回だけ生成 (`self._perf_context_cache`)
+
+  ### キャッシュ戦略
+  ```python
+  self._perf_context_cache: str = ""
+  self._perf_context_updated_at: Optional[datetime] = None
+  # 30分ごとに再生成 (閉じたポジションが増えたタイミングで自動更新)
+  ```
+
+  ### ログ出力例
+  ```
+  📊 LLM context: 過去23件 勝率61% | crypto注意(40%) | 直近外れ2件
+  ```
+
+  ### 注意
+  - 解決済みポジションが10件未満のときはフィードバックなし (データ不足で逆効果)
+  - prompt が長くなりすぎないよう context は最大500文字程度に制限
+  - `previous_judgment` (同マーケット前回判断) との併用で、マクロ傾向 + 個別文脈の両方を提供
+
 - [ ] **同一イベントへの集中リスク対策 (相関グループ管理)**
   - 現状: "GTA VI before X?" 系マーケットが複数トリガーに並ぶと実質1ポジション分のリスクになる
   - 対策案: マーケットの `question` からイベントキーワードを抽出し、同一グループへのエクスポージャーをグループ単位で上限管理
