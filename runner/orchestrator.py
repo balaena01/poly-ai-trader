@@ -197,6 +197,10 @@ class Orchestrator:
         # 最新シグナルキャッシュ (エッジ消失利確に使用)
         self._last_signals: Dict = {}  # market_id → Signal
 
+        # パフォーマンスフィードバック context キャッシュ (30分ごとに再生成)
+        self._perf_context_cache: str = ""
+        self._perf_context_updated_at: Optional[datetime] = None
+
         # 構造化ログ (data/trade_log.jsonl)
         _log_dir = Path(__file__).parent.parent / "data"
         _log_dir.mkdir(parents=True, exist_ok=True)
@@ -547,6 +551,9 @@ class Orchestrator:
             # 前回LLM判断を読み込み (トリガー設定済みマーケットの再分析時に使用)
             previous_judgment = self._load_llm_judgment(token_id) if token_id else None
 
+            # パフォーマンスフィードバック context (30分キャッシュ)
+            performance_context = self._build_performance_context()
+
             # 分析
             signal = await self.analyst.analyze(
                 market=market,
@@ -555,6 +562,7 @@ class Orchestrator:
                 btc_price=self._btc_price,
                 news_context=news_context,
                 previous_judgment=previous_judgment,
+                performance_context=performance_context,
             )
 
             # LLM予測をBrierTrackerに記録（最初の1回のみ保存）
@@ -1238,6 +1246,84 @@ class Orchestrator:
             except Exception as e:
                 print(f"   ❌ _exit_position エラー (継続): {e}")
     
+    def _classify_market_category(self, question: str) -> str:
+        """マーケットをカテゴリ分類"""
+        q = question.lower()
+        if any(k in q for k in ["btc", "bitcoin", "eth", "ethereum", "crypto", "solana", "doge", "xrp"]):
+            return "crypto"
+        if any(k in q for k in ["election", "president", "prime minister", "vote", "poll", "senator", "governor"]):
+            return "election"
+        if any(k in q for k in ["war", "ceasefire", "troops", "military", "russia", "ukraine", "israel", "nato", "sanctions"]):
+            return "geopolitical"
+        return "other"
+
+    def _build_performance_context(self) -> str:
+        """
+        過去の予測実績をまとめて LLM へのフィードバック context 文字列を生成。
+        30分キャッシュ。解決済み10件未満の場合は空文字を返す。
+        """
+        now = datetime.now(timezone.utc)
+        # キャッシュ有効期間: 30分
+        if (self._perf_context_updated_at is not None and
+                (now - self._perf_context_updated_at).total_seconds() < 1800):
+            return self._perf_context_cache
+
+        closed = self.position_tracker.get_closed_positions(limit=30)
+        resolved = [p for p in closed if p.exit_price is not None]
+
+        if len(resolved) < 10:
+            self._perf_context_cache = ""
+            self._perf_context_updated_at = now
+            return ""
+
+        # 勝敗判定: pnl > 0 = 勝ち
+        wins = [p for p in resolved if p.pnl > 0]
+        losses = [p for p in resolved if p.pnl <= 0]
+        win_rate = len(wins) / len(resolved)
+        avg_pnl = sum(p.pnl for p in resolved) / len(resolved)
+
+        # カテゴリ別勝率
+        cat_results: Dict[str, list] = {}
+        for p in resolved:
+            cat = self._classify_market_category(p.question)
+            cat_results.setdefault(cat, []).append(p.pnl > 0)
+        cat_lines = []
+        for cat, results in sorted(cat_results.items()):
+            rate = sum(results) / len(results)
+            flag = " ⚠️ 注意" if rate < 0.45 else ""
+            cat_lines.append(f"  - {cat}: 勝率{rate:.0%} ({len(results)}件){flag}")
+
+        # 直近の外れパターン (最大5件)
+        recent_losses = [p for p in resolved if p.pnl <= 0][:5]
+        miss_lines = []
+        for p in recent_losses:
+            miss_lines.append(f"  - \"{p.question[:40]}\" {p.side} → 負け (PnL:{p.pnl:+.2f})")
+
+        lines = [
+            f"[あなたの過去{len(resolved)}件の予測実績]",
+            f"勝率: {win_rate:.0%} ({len(wins)}勝/{len(losses)}敗) | 平均PnL: ${avg_pnl:+.2f}/件",
+            "カテゴリ別:",
+        ] + cat_lines
+
+        if miss_lines:
+            lines.append("直近の外れ予測:")
+            lines += miss_lines
+
+        lines.append("※ 苦手なカテゴリは特に保守的な確率推定を心がけてください。")
+
+        context = "\n".join(lines)
+        # 500文字上限
+        if len(context) > 500:
+            context = context[:497] + "..."
+
+        self._perf_context_cache = context
+        self._perf_context_updated_at = now
+
+        cat_summary = " | ".join(f"{c}:{sum(r)/len(r):.0%}" for c, r in cat_results.items())
+        print(f"   📊 LLM context: 過去{len(resolved)}件 勝率{win_rate:.0%} | {cat_summary}")
+
+        return context
+
     def _get_analysis_interval(self, markets: List) -> int:
         """分析間隔を決定 (分)"""
         if not markets:

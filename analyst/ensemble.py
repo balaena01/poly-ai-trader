@@ -153,6 +153,7 @@ class EnsembleAnalyst:
         eth_change: float = None,
         news_context: str = None,
         previous_judgment: dict = None,
+        performance_context: str = "",
     ) -> EnsembleSignal:
         """
         マーケットを分析
@@ -204,6 +205,8 @@ class EnsembleAnalyst:
                 f'conf={previous_judgment.get("confidence", 0.5):.0%} '
                 f'"{previous_judgment.get("reasoning", "")}"'
             )
+        if performance_context:
+            context["performance_context"] = performance_context
 
         llm_result = await self.llm_analyst.analyze_market(
             question=market.question,

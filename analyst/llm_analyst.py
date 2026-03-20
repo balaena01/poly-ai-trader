@@ -210,6 +210,8 @@ class LLMAnalyst:
                 ctx_text += f"\n\n関連ニュース:\n{context['news']}"
             if "previous_judgment" in context:
                 ctx_text += f"\n\n{context['previous_judgment']}"
+            if "performance_context" in context:
+                ctx_text += f"\n\n{context['performance_context']}"
 
         full_prompt = f"""{self.SYSTEM_PROMPT}
 ## 予測対象
