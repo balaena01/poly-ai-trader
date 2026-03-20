@@ -719,6 +719,23 @@ class Orchestrator:
             "reason": reason,
         })
 
+    def _direct_close_position(self, pos, current_price: float, reason: str):
+        """ポジションを直接クローズ (CLOB売り省略)"""
+        realized_pnl = pos.calculate_unrealized_pnl(current_price)
+        self.position_tracker.close_position(pos.id, current_price, realized_pnl)
+        if pos.market_id in self.risk_manager.open_positions:
+            del self.risk_manager.open_positions[pos.market_id]
+        self.executed_markets.discard(pos.market_id)
+        self._log_event("position_exited", {
+            "market_id": pos.market_id,
+            "question": pos.question[:60],
+            "reason": reason,
+            "exit_price": round(current_price, 6),
+            "realized_pnl": round(realized_pnl, 4),
+            "direct_close": True,
+        })
+        print(f"   💀 直接クローズ (CLOB売り省略): PnL ${realized_pnl:+.2f}")
+
     async def _exit_position(self, pos, reason: str, current_price: float):
         """ポジションを早期クローズ (利確 / 損切り / LLM逆転)"""
         _label = {"take_profit": "💰 利確", "stop_loss": "🛑 損切り", "llm_reversal": "🔄 LLM逆転"}.get(reason, f"📤 {reason}")
@@ -726,6 +743,19 @@ class Orchestrator:
 
         exit_side = "SELL_YES" if "YES" in pos.side.upper() else "SELL_NO"
         sell_price = current_price if "YES" in exit_side else (1.0 - current_price)
+
+        # ── 残存価値が極めて低い場合は直接クローズ (CLOB売りは流動性なし) ──────
+        # 崩壊した側のトークンは買い手がおらず GTC が LIVE で放置されるのを防ぐ
+        DIRECT_CLOSE_THRESHOLD = 2.0  # USD
+        if "YES" in exit_side:
+            estimated_value = pos.size * sell_price / pos.entry_price if pos.entry_price > 0 else 0.0
+        else:
+            entry_no_price = 1.0 - pos.entry_price
+            estimated_value = pos.size * sell_price / entry_no_price if entry_no_price > 0 else 0.0
+        if estimated_value < DIRECT_CLOSE_THRESHOLD:
+            print(f"   ⚠️ 残存価値 ${estimated_value:.2f} < ${DIRECT_CLOSE_THRESHOLD} → CLOB売り省略")
+            self._direct_close_position(pos, current_price, reason)
+            return
 
         # 実トークン残高補正は execute_order 内で接続後に実施
         try:
