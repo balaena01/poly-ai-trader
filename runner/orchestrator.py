@@ -1255,12 +1255,13 @@ class Orchestrator:
             pnl_pct = exit_signal["pnl_pct"]
             yes_price = current_prices.get(pos.market_id, 0.5)
 
-            _icons = {"take_profit": "💰", "collapse_stop": "💥", "near_expiry_stop": "⏰", "stop_loss": "🛑"}
-            _labels = {"take_profit": "利確", "collapse_stop": "確率崩壊ストップ", "near_expiry_stop": "近解決損切り", "stop_loss": "損切り"}
+            _icons = {"take_profit": "💰", "edge_take_profit": "🎯", "collapse_stop": "💥", "near_expiry_stop": "⏰", "stop_loss": "🛑"}
+            _labels = {"take_profit": "利確", "edge_take_profit": "エッジ消失利確", "collapse_stop": "確率崩壊ストップ", "near_expiry_stop": "近解決損切り", "stop_loss": "損切り"}
             detail = exit_signal.get("detail", "")
             print(f"\n{_icons.get(reason,'🛑')} {_labels.get(reason,'損切り')}候補: {pos.question[:40]} ({pnl_pct:+.1%}) {detail}")
 
-            # 利確: 解決まで14日超のときのみ実行 (残り日数が少ないとスプレッドコストが割に合わない)
+            # 価格ベース利確のみ: 解決まで14日超のときのみ実行 (スプレッドコストが割に合わない)
+            # エッジ消失利確 (edge_take_profit) は14日制約なし — thesis消滅は即撤退
             if reason == "take_profit":
                 end_date = end_dates.get(pos.market_id)
                 if end_date:

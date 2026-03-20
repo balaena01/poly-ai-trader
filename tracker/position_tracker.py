@@ -367,13 +367,14 @@ class PositionTracker:
 
             # ── 3. エッジ消失利確 (メイン) ───────────────────────────────────
             # entry_edge が記録されていて、最新シグナルのエッジが閾値以下になったら利確
+            # ※ 14日制約は適用しない (thesis消滅 = 残り日数に関係なく撤退すべき)
             if pos.entry_edge is not None:
                 sig = last_signals.get(pos.market_id)
                 if sig is not None:
                     current_edge = abs(getattr(sig, 'edge', 1.0))
                     if current_edge < edge_take_profit_threshold:
                         exit_signals.append({
-                            "position": pos, "action": action, "reason": "take_profit",
+                            "position": pos, "action": action, "reason": "edge_take_profit",
                             "pnl_pct": pnl_pct,
                             "detail": f"エッジ消失 entry_edge={pos.entry_edge:+.1%} → current_edge={current_edge:+.1%}",
                         })
