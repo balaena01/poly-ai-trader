@@ -1915,6 +1915,7 @@ class Orchestrator:
                 pass
 
         estimated_pnl = pos.calculate_unrealized_pnl(yes_price)
+        pos.needs_manual_sale = False  # dismiss 時にフラグをリセット
         self.position_tracker.close_position(pos_id, exit_price=yes_price, realized_pnl=estimated_pnl)
         self.executed_markets.discard(pos.market_id)
         print(f"✅ 手動売却確認・クローズ: {pos.question[:40]} (推定PnL: ${estimated_pnl:+.2f})")
