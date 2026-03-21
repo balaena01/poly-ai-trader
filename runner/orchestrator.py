@@ -1029,7 +1029,13 @@ class Orchestrator:
                         sell_status = "FILLED"  # 残高ゼロ = 売り切れ
                         print(f"   🔍 get_order失敗 → 残高ゼロで約定確認 (fallback): {pos.question[:40]}")
                     else:
-                        print(f"   ⚠️ get_order失敗・残高確認不可 → スキップ: {pos.question[:40]}")
+                        # 残高確認不可 → 3段目: マーケット解決チェック
+                        market_data = client.get_market(pos.market_id)
+                        if market_data and market_data.get("closed"):
+                            self.position_tracker.cancel_pending_sell(pos.id)
+                            print(f"   🏁 市場解決済み → pending_sell クリア (resolve待ち): {pos.question[:40]}")
+                        else:
+                            print(f"   ⚠️ get_order失敗・残高確認不可 → スキップ: {pos.question[:40]}")
                         continue
                 except Exception:
                     print(f"   ⚠️ get_order失敗・fallbackエラー → スキップ: {pos.question[:40]}")
@@ -1056,10 +1062,10 @@ class Orchestrator:
                 print(f"   ↩️ 売り注文キャンセル検出 → ACTIVE復帰: {pos.question[:40]}")
 
             elif sell_status == "LIVE":
-                created = pos.created_at
-                if created.tzinfo is None:
-                    created = created.astimezone(timezone.utc)
-                elapsed_min = (now - created).total_seconds() / 60
+                sell_placed = pos.pending_sell_placed_at or pos.created_at
+                if sell_placed.tzinfo is None:
+                    sell_placed = sell_placed.astimezone(timezone.utc)
+                elapsed_min = (now - sell_placed).total_seconds() / 60
                 if elapsed_min > gtc_cancel_minutes:
                     result = client.cancel_order(pos.pending_sell_order_id)
                     if result.success:

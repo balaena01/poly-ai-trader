@@ -43,6 +43,7 @@ class Position:
     # GTC売り注文追跡 (利確・損切り・LLM逆転クローズ)
     pending_sell_order_id: Optional[str] = None   # 売り注文発注済み・約定待ち
     pending_sell_price: Optional[float] = None    # 売り時の YES 価格
+    pending_sell_placed_at: Optional[datetime] = None  # 売り注文発注時刻 (タイムアウト計算用)
 
     # 手動売却フラグ (トークン未保有等でシステムクローズ不可)
     needs_manual_sale: bool = False
@@ -99,6 +100,7 @@ class Position:
             "order_filled": self.order_filled,
             "pending_sell_order_id": self.pending_sell_order_id,
             "pending_sell_price": self.pending_sell_price,
+            "pending_sell_placed_at": self.pending_sell_placed_at.isoformat() if self.pending_sell_placed_at else None,
             "needs_manual_sale": self.needs_manual_sale,
             "entry_edge": self.entry_edge,
             "exit_price": self.exit_price,
@@ -123,6 +125,7 @@ class Position:
             order_filled=data.get("order_filled", True),
             pending_sell_order_id=data.get("pending_sell_order_id"),
             pending_sell_price=data.get("pending_sell_price"),
+            pending_sell_placed_at=datetime.fromisoformat(data["pending_sell_placed_at"]) if data.get("pending_sell_placed_at") else None,
             needs_manual_sale=data.get("needs_manual_sale", False),
             entry_edge=data.get("entry_edge"),
             exit_price=data.get("exit_price"),
@@ -247,6 +250,7 @@ class PositionTracker:
         if pos_id in self.positions:
             self.positions[pos_id].pending_sell_order_id = order_id
             self.positions[pos_id].pending_sell_price = sell_price
+            self.positions[pos_id].pending_sell_placed_at = datetime.now(timezone.utc)
             self._save()
 
     def cancel_pending_sell(self, pos_id: str):
@@ -254,6 +258,7 @@ class PositionTracker:
         if pos_id in self.positions:
             self.positions[pos_id].pending_sell_order_id = None
             self.positions[pos_id].pending_sell_price = None
+            self.positions[pos_id].pending_sell_placed_at = None
             self._save()
 
     def get_pending_sell_positions(self) -> List[Position]:
