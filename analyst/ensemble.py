@@ -45,6 +45,9 @@ class EnsembleSignal:
     llm_reasoning: str = ""
     # LLMによるスポーツ市場判定
     llm_is_sport: Optional[bool] = None
+    # LLMによる相関ポジション検出
+    llm_is_correlated: Optional[bool] = None
+    llm_correlation_reason: str = ""
     
     @property
     def is_tradeable(self) -> bool:
@@ -154,6 +157,7 @@ class EnsembleAnalyst:
         news_context: str = None,
         previous_judgment: dict = None,
         performance_context: str = "",
+        open_positions_context: str = "",
     ) -> EnsembleSignal:
         """
         マーケットを分析
@@ -207,6 +211,8 @@ class EnsembleAnalyst:
             )
         if performance_context:
             context["performance_context"] = performance_context
+        if open_positions_context:
+            context["open_positions_context"] = open_positions_context
 
         llm_result = await self.llm_analyst.analyze_market(
             question=market.question,
@@ -218,8 +224,12 @@ class EnsembleAnalyst:
         llm_conf = llm_result.get("confidence", 0.5) if llm_result else 0.5
         llm_reasoning = llm_result.get("reasoning", "") if llm_result else ""
         llm_is_sport = llm_result.get("is_sport", None) if llm_result else None
+        llm_is_correlated = llm_result.get("is_correlated", False) if llm_result else False
+        llm_correlation_reason = llm_result.get("correlation_reason", "") if llm_result else ""
         if llm_is_sport:
             print(f"   🏟️ LLM判定: スポーツ市場")
+        if llm_is_correlated:
+            print(f"   🔗 LLM判定: 相関ポジションあり — {llm_correlation_reason}")
 
         # skill_score に応じて LLM シグナルを減衰
         # skill=None(未計測) → attenuation=1.0（そのまま）
@@ -419,6 +429,8 @@ class EnsembleAnalyst:
             confidence=confidence,
             llm_reasoning=llm_reasoning,
             llm_is_sport=llm_is_sport,
+            llm_is_correlated=llm_is_correlated,
+            llm_correlation_reason=llm_correlation_reason,
         )
     
     async def analyze_markets(

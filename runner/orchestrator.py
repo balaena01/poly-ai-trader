@@ -554,6 +554,9 @@ class Orchestrator:
             # パフォーマンスフィードバック context (30分キャッシュ)
             performance_context = self._build_performance_context()
 
+            # 保有ポジション context (相関チェック用、新規エントリー時のみ)
+            open_positions_context = "" if (_check_reversal_exit or pending_pos) else self._build_open_positions_context()
+
             # 分析
             signal = await self.analyst.analyze(
                 market=market,
@@ -563,6 +566,7 @@ class Orchestrator:
                 news_context=news_context,
                 previous_judgment=previous_judgment,
                 performance_context=performance_context,
+                open_positions_context=open_positions_context,
             )
 
             # LLM予測をBrierTrackerに記録（最初の1回のみ保存）
@@ -621,6 +625,13 @@ class Orchestrator:
                 if _llm_sport: reason.append("LLM判定")
                 print(f"   🏟️ スポーツ市場のためトレードスキップ ({'+'.join(reason)}, Brier記録のみ)")
                 return
+
+            # 相関ポジション検出 → 新規エントリーのみスキップ (reversal/pendingは通過)
+            if not _check_reversal_exit and not pending_pos:
+                if getattr(signal, 'llm_is_correlated', False):
+                    corr_reason = getattr(signal, 'llm_correlation_reason', '')
+                    print(f"   🔗 相関ポジション検出のためスキップ: {corr_reason}")
+                    return
 
             # 信頼度調整
             adjusted_confidence = audit_result.adjusted_confidence
@@ -1277,6 +1288,17 @@ class Orchestrator:
             except Exception as e:
                 print(f"   ❌ _exit_position エラー (継続): {e}")
     
+    def _build_open_positions_context(self) -> str:
+        """保有中ポジション一覧を LLM の相関チェック用 context 文字列として生成"""
+        positions = self.position_tracker.get_open_positions()
+        filled = [p for p in positions if p.order_filled]
+        if not filled:
+            return ""
+        lines = ["## 保有中のポジション (相関チェック用)"]
+        for p in filled:
+            lines.append(f'- "{p.question}" ({p.side.upper()})')
+        return "\n".join(lines)
+
     def _classify_market_category(self, question: str) -> str:
         """マーケットをカテゴリ分類"""
         q = question.lower()

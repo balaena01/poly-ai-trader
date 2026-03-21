@@ -8,7 +8,7 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | chore: ㉔ TODO追加 — LLM相関ポジション検出 (同一イベント二重エントリー防止) |
+| (最新) | feat: ㉔ LLM相関ポジション検出実装 — is_correlated フラグ + 新規エントリースキップ |
 | `prev` | feat: ㉒ 利確再設計 — エッジ消失利確(entry_edge + _last_signals キャッシュ) |
 | `prev` | feat: ㉑ 損切りロジック再設計 — 確率崩壊ストップ(88%) + 近解決×含み損(-40%/7日) |
 | `prev` | fix: exit_signals ループの堅牢性改善 (needs_manual_sale スキップ + 各イテレーションのtry/except) |
@@ -857,7 +857,7 @@ python main.py run --live
   - prompt が長くなりすぎないよう context は最大500文字程度に制限
   - `previous_judgment` (同マーケット前回判断) との併用で、マクロ傾向 + 個別文脈の両方を提供
 
-- [ ] **㉔ LLM による相関ポジション検出 — 同一イベント二重エントリー防止**
+- [x] **㉔ LLM による相関ポジション検出 — 同一イベント二重エントリー防止**
 
   ### 問題 (実例)
   "Will Israel strike 2 countries in March 2026?" → BUY_YES

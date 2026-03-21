@@ -85,9 +85,13 @@ class LLMAnalyst:
    - true の例: NFL試合の勝者、NBAチャンピオン、テニス大会の優勝者、UFC試合結果、競馬レース、esports大会
    - false の例: BTC価格予測、大統領選挙、経済指標、エンタメ・映画、政治イベント
    - 判断が難しい場合は false (false side-safe)
+6. is_correlated: 「保有中のポジション」が提供されている場合、分析対象マーケットがそれらと同一または強く相関するイベントであれば true。
+   - true の例: 同じ試合の別条件、同じ選挙で排他的な結果、同じ資産の別閾値、同じ地政学イベントの別スケール
+   - false の例: 明らかに無関係なイベント、保有ポジションが提供されていない場合
+   - 判断が難しい場合は false (false side-safe)
 
 ## 出力形式 (JSON のみ。他のテキスト不要)
-{"probability": 0.65, "confidence": 0.7, "reasoning": "理由を簡潔に", "is_sport": false}
+{"probability": 0.65, "confidence": 0.7, "reasoning": "理由を簡潔に", "is_sport": false, "is_correlated": false, "correlation_reason": ""}
 """
 
     def __init__(
@@ -212,6 +216,8 @@ class LLMAnalyst:
                 ctx_text += f"\n\n{context['previous_judgment']}"
             if "performance_context" in context:
                 ctx_text += f"\n\n{context['performance_context']}"
+            if "open_positions_context" in context:
+                ctx_text += f"\n\n{context['open_positions_context']}"
 
         full_prompt = f"""{self.SYSTEM_PROMPT}
 ## 予測対象
