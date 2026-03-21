@@ -22,6 +22,7 @@ from risk import RiskManager, Auditor
 from data_fetcher import PolyWebSocket, GoogleNewsFetcher, NewsFetcher, PriceHistoryFetcher
 from factor import FactorManager
 from tracker import PositionTracker
+from tracker.position_tracker import PositionStatus
 from tracker.brier_tracker import BrierTracker
 
 # Dashboard (optional)
@@ -1774,7 +1775,13 @@ class Orchestrator:
                     current_prices[mid] = price
 
             # スキャンに含まれないポジションはCLOBから直接取得
+            # needs_manual_sale=true のポジションも含める (㉘: Polymarket上トークン残存)
             open_positions = self.position_tracker.get_open_positions()
+            manual_sale_positions = [
+                p for p in self.position_tracker.positions.values()
+                if p.needs_manual_sale and p.status != PositionStatus.OPEN and p.order_filled
+            ]
+            open_positions = open_positions + manual_sale_positions
             missing = [p for p in open_positions if p.market_id not in current_prices]
             if missing:
                 try:
@@ -1841,8 +1848,27 @@ class Orchestrator:
             # ポートフォリオ集計 (PENDING は株式未保有のため除外)
             filled_data      = [p for p in positions_data if p.get("order_filled") is True]
             total_unrealized = round(sum(p.get("unrealized_pnl", 0) for p in filled_data), 2)
-            total_exposure   = round(sum(p.get("size", 0) for p in filled_data), 2)
-            portfolio        = round(self.risk_manager.current_balance + total_exposure + total_unrealized, 2)
+
+            # portfolio = USDC残高 + Σ(ポジション時価) — Polymarket と同じ計算 (㉘)
+            total_market_value = 0.0
+            for p in filled_data:
+                size = p.get("size", 0)
+                entry = p.get("entry_price", 0)
+                current = p.get("current_price", entry)
+                side = (p.get("side") or "").upper()
+                if entry <= 0:
+                    continue
+                if "NO" in side:
+                    entry_no = 1.0 - entry
+                    current_no = 1.0 - current
+                    tokens = size / entry_no if entry_no > 0 else 0
+                    total_market_value += tokens * current_no
+                else:
+                    tokens = size / entry
+                    total_market_value += tokens * current
+
+            total_exposure   = round(total_market_value, 2)
+            portfolio        = round(self.risk_manager.current_balance + total_market_value, 2)
             await self.dashboard.update_state("unrealized_pnl", total_unrealized)
             await self.dashboard.update_state("exposure", total_exposure)
             await self.dashboard.update_state("portfolio", portfolio)
