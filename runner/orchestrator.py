@@ -1016,12 +1016,23 @@ class Orchestrator:
             if not pos.pending_sell_order_id:
                 continue
 
-            if active_ids is not None and pos.pending_sell_order_id not in active_ids:
-                order = client.get_order(pos.pending_sell_order_id)
-                sell_status = _order_status(order)
-            else:
-                order = client.get_order(pos.pending_sell_order_id)
-                sell_status = _order_status(order)
+            order = client.get_order(pos.pending_sell_order_id)
+            sell_status = _order_status(order)
+
+            # get_order が None を返した場合 → トークン残高で約定確認 (fallback)
+            if sell_status is None:
+                try:
+                    tok = pos.token_id
+                    balance = client.get_token_balance(tok) if tok else None
+                    if balance is not None and balance == 0:
+                        sell_status = "FILLED"  # 残高ゼロ = 売り切れ
+                        print(f"   🔍 get_order失敗 → 残高ゼロで約定確認 (fallback): {pos.question[:40]}")
+                    else:
+                        print(f"   ⚠️ get_order失敗・残高確認不可 → スキップ: {pos.question[:40]}")
+                        continue
+                except Exception:
+                    print(f"   ⚠️ get_order失敗・fallbackエラー → スキップ: {pos.question[:40]}")
+                    continue
 
             if sell_status in ("MATCHED", "FILLED"):
                 exit_price = pos.pending_sell_price or pos.entry_price
