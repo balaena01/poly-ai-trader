@@ -8,7 +8,8 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | feat: ㉒ 利確再設計 — エッジ消失利確(entry_edge + _last_signals キャッシュ) |
+| (最新) | chore: ㉔ TODO追加 — LLM相関ポジション検出 (同一イベント二重エントリー防止) |
+| `prev` | feat: ㉒ 利確再設計 — エッジ消失利確(entry_edge + _last_signals キャッシュ) |
 | `prev` | feat: ㉑ 損切りロジック再設計 — 確率崩壊ストップ(88%) + 近解決×含み損(-40%/7日) |
 | `prev` | fix: exit_signals ループの堅牢性改善 (needs_manual_sale スキップ + 各イテレーションのtry/except) |
 | `18c9536` | fix: GTC売り注文を即CLOSEDにせずPENDING_SELL状態で約定確認後にCLOSED |
@@ -855,6 +856,82 @@ python main.py run --live
   - 解決済みポジションが10件未満のときはフィードバックなし (データ不足で逆効果)
   - prompt が長くなりすぎないよう context は最大500文字程度に制限
   - `previous_judgment` (同マーケット前回判断) との併用で、マクロ傾向 + 個別文脈の両方を提供
+
+- [ ] **㉔ LLM による相関ポジション検出 — 同一イベント二重エントリー防止**
+
+  ### 問題 (実例)
+  "Will Israel strike 2 countries in March 2026?" → BUY_YES
+  "Will Israel strike ≥4 countries in March 2026?" → BUY_YES
+  → 両方 YES を買うのは論理的に矛盾 (片方が YES なら必ずもう片方は NO)。
+  LLM が各マーケットを**独立して**分析するため、保有済みポジションとの相関を見落とす。
+  キーワードマッチでは "2 countries" vs "≥4 countries" の相関は取れないが、LLM なら意味的に判断できる。
+
+  ### 解決策: LLM に保有ポジション一覧を渡して相関フラグを出力させる
+
+  **JSON 出力スキーマに `is_correlated` を追加**
+  ```json
+  {"probability": 0.65, "confidence": 0.7, "reasoning": "...", "is_sport": false, "is_correlated": false, "correlation_reason": ""}
+  ```
+  - `is_correlated: true` → このマーケットは保有済みポジションと相関あり → 発注スキップ
+  - `correlation_reason`: 相関理由 (ログ用)
+
+  **システムプロンプトへの追記**
+  ```
+  ## 保有中のポジション (相関チェック用)
+  以下はすでにオープンしているポジションです:
+  - "Will Israel strike ≥4 countries in March 2026?" (BUY_YES)
+  - "Will Trump visit China by May 31?" (BUY_NO)
+
+  分析対象マーケットが上記のいずれかと「同一または強く相関するイベント」に関する場合、
+  is_correlated: true を返してください。
+  相関の例:
+  - 同じ試合・大会の別条件 ("チームA が勝つ" と "チームA が10点以上取る")
+  - 同じ選挙の別候補 ("A が当選" と "B が当選" で排他的)
+  - 同じ資産の別閾値 ("BTC が$80k超" と "BTC が$100k超" は正相関)
+  - 同じ地政学イベントの別スケール ("2カ国攻撃" と "≥4カ国攻撃" は排他的)
+  保有ポジションがない場合、または明確に無関係な場合は is_correlated: false。
+  ```
+
+  ### 実装箇所
+
+  **`analyst/llm_analyst.py`**
+  - `SYSTEM_PROMPT` に保有ポジション context のプレースホルダーを追加
+  - `analyze_market()` に `open_positions_context: str = ""` 引数を追加
+  - context に注入: `if open_positions_context: ctx_text += f"\n\n{open_positions_context}"`
+  - `_parse_llm_json()` で `is_correlated` / `correlation_reason` を取得
+
+  **`analyst/ensemble.py`**
+  - `analyze()` に `open_positions_context: str = ""` 引数を追加
+  - `llm_analyst.analyze_market()` に渡す
+  - 戻り値 `EnsembleSignal` に `llm_is_correlated: Optional[bool]` フィールドを追加
+
+  **`runner/orchestrator.py`**
+  - `_analyze_market()` で発注直前に保有ポジション一覧を文字列生成:
+    ```python
+    def _build_open_positions_context(self) -> str:
+        positions = self.position_tracker.get_open_positions()
+        filled = [p for p in positions if p.order_filled]
+        if not filled:
+            return ""
+        lines = ["## 保有中のポジション (相関チェック用)"]
+        for p in filled:
+            lines.append(f'- "{p.question}" ({p.side.upper()})')
+        return "\n".join(lines)
+    ```
+  - `analyst.analyze()` に `open_positions_context=self._build_open_positions_context()` を渡す
+  - シグナル取得後: `if getattr(signal, 'llm_is_correlated', False): print(...); return`
+
+  ### ログ出力例
+  ```
+  🔗 相関ポジション検出: Will Israel strike 2 countries in March 2026?
+     → 保有中: "Will Israel strike ≥4 countries in March 2026?" (BUY_YES) と排他的
+     ⏭️ 発注スキップ
+  ```
+
+  ### 注意
+  - LLM が過剰検出するリスク: `correlation_reason` をログに出して様子見。誤検出が多ければ閾値調整
+  - 保有ポジションが0件の場合は context を渡さない (prompt を短く保つ)
+  - PENDING (order_filled=False) のポジションも相関対象に含める (約定前でも同じリスク)
 
 - [ ] **同一イベントへの集中リスク対策 (相関グループ管理)**
   - 現状: "GTA VI before X?" 系マーケットが複数トリガーに並ぶと実質1ポジション分のリスクになる
