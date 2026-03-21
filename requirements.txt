@@ -33,3 +33,6 @@ uvicorn>=0.23.0
 # Web scraping (ニュース本文取得)
 scrapling>=0.4.0
 playwright>=1.40.0
+
+# Date parsing (ニュース公開日時抽出)
+python-dateutil>=2.8.0

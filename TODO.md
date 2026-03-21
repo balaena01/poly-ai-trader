@@ -1018,6 +1018,418 @@ python main.py run --live
   - `buy_volume_ratio` / `order_flow_imbalance` が実データで学習されるように
   - 合わせて Gamma API 直接呼び出しに変更 (closed=false バグも修正)
 
+- [ ] **㉗ ニュース→LLM入力の品質改善 (優先度S+A)**
+
+  ### 背景・動機
+  プロトレーダー10人の視点でレビューした結果、現在のニュース取得→LLM入力パイプラインに
+  重大な情報欠落が多数見つかった。LLMが受け取る情報の質が予測精度のボトルネックになっている。
+
+  ### 現状の問題点
+  ```
+  現在LLMに渡される形式:
+  関連ニュース:
+  - Bitcoin jumps as oil prices slip
+    Article body text truncated to 300 chars...
+  - Crypto market sheds $100 billion...
+    Body text...
+
+  問題:
+  1. 公開日時なし → 3日前の記事と今日の記事が区別不能
+  2. ソース名なし → CoinDeskもランダムブログも同列扱い
+  3. 最大5件 → コンセンサス方向が見えない
+  4. 本文300文字 → 核心情報（データ・数値・引用）に到達しない
+  5. 質問タイプを問わず一律DDG検索 → 政治系・規制系で的外れな記事を拾う
+  ```
+
+  ---
+
+  ### 改善① (S) 公開日時をLLMに渡す
+
+  #### 目的
+  LLMが情報の鮮度を判断でき、古い記事に基づく誤判断を防ぐ。
+
+  #### 実装
+
+  **A. `data_fetcher/news_fetcher.py` — `GoogleNewsFetcher.search()`**
+  DDG検索結果から日付を直接取得するのは難しいため、記事本文フェッチ時にメタデータを抽出する。
+
+  ```python
+  # Scraplingで記事ページをフェッチした後:
+  published = None
+
+  # 1. <meta> タグから取得 (最も信頼性が高い)
+  meta_selectors = [
+      'meta[property="article:published_time"]',
+      'meta[name="publish-date"]',
+      'meta[name="date"]',
+      'meta[property="og:article:published_time"]',
+  ]
+  for sel in meta_selectors:
+      el = page.css_first(sel)
+      if el:
+          published = el.attrib.get("content", "")
+          break
+
+  # 2. <time> タグから取得
+  if not published:
+      time_el = page.css_first("time[datetime]")
+      if time_el:
+          published = time_el.attrib.get("datetime", "")
+
+  # 3. パース
+  if published:
+      from dateutil.parser import parse as dateparse
+      try:
+          article.published = dateparse(published)
+      except Exception:
+          pass
+  ```
+
+  **B. `runner/orchestrator.py` — ニュースフォーマット部分 (L516-523)**
+  ```python
+  # 変更前:
+  line = f"- {a.title}"
+  if a.summary:
+      line += f"\n  {a.summary[:300]}"
+
+  # 変更後:
+  date_str = a.published.strftime('%Y-%m-%d %H:%M') if a.published else "日時不明"
+  line = f"- [{date_str}] {a.title}"
+  if a.summary:
+      line += f"\n  {a.summary[:300]}"
+  ```
+
+  **LLMに渡される改善後の形式:**
+  ```
+  関連ニュース:
+  - [2026-03-21 14:30] Bitcoin jumps as oil prices slip
+    Article body...
+  - [2026-03-20 09:15] Crypto market sheds $100 billion...
+    Body text...
+  - [日時不明] Another headline...
+  ```
+
+  ---
+
+  ### 改善② (S) ソース名をLLMに渡す
+
+  #### 目的
+  LLMがソースの信頼度を考慮して判断できるようにする。
+  CoinDesk / Reuters と個人ブログでは情報の重みが異なる。
+
+  #### 実装
+
+  **A. `data_fetcher/news_fetcher.py` — `GoogleNewsFetcher.search()`**
+  現在 `source=url` でURL全体を入れている。ドメイン名を抽出してクリーンにする。
+
+  ```python
+  import re
+  from urllib.parse import urlparse
+
+  def _extract_source_name(self, url: str) -> str:
+      """URLからソース名を抽出"""
+      try:
+          domain = urlparse(url).netloc
+          # www. を除去
+          domain = re.sub(r'^www\.', '', domain)
+          # 既知ソースのマッピング
+          known = {
+              "coindesk.com": "CoinDesk",
+              "cointelegraph.com": "CoinTelegraph",
+              "theblock.co": "The Block",
+              "decrypt.co": "Decrypt",
+              "reuters.com": "Reuters",
+              "bloomberg.com": "Bloomberg",
+              "cnbc.com": "CNBC",
+              "bbc.com": "BBC",
+              "nytimes.com": "NYT",
+              "washingtonpost.com": "WaPo",
+              "theguardian.com": "The Guardian",
+              "apnews.com": "AP News",
+              "forbes.com": "Forbes",
+              "yahoo.com": "Yahoo Finance",
+              "finance.yahoo.com": "Yahoo Finance",
+          }
+          return known.get(domain, domain)
+      except Exception:
+          return url
+  ```
+
+  **B. `runner/orchestrator.py` — フォーマット部分**
+  ```python
+  source_name = a.source if len(a.source) < 30 else a.source.split('/')[2]  # ドメイン抽出
+  date_str = a.published.strftime('%Y-%m-%d %H:%M') if a.published else "日時不明"
+  line = f"- [{date_str} | {source_name}] {a.title}"
+  ```
+
+  **LLMに渡される形式:**
+  ```
+  - [2026-03-21 14:30 | CoinDesk] Bitcoin jumps as oil prices slip
+  - [2026-03-20 09:15 | The Block] Crypto market sheds $100 billion...
+  - [日時不明 | decrypt.co] Another headline...
+  ```
+
+  ---
+
+  ### 改善③ (A) 記事数を10-15件に増やす (タイトルのみ追加分)
+
+  #### 目的
+  報道のコンセンサス方向（強気何件/弱気何件）をLLMが把握できるようにする。
+  5件では偏ったソースの意見しか拾えないリスクがある。
+
+  #### 設計方針
+  - 上位5件: タイトル + ソース + 日時 + 本文サマリー（従来通り）
+  - 6-15件目: タイトル + ソース + 日時のみ（トークン節約）
+  - これにより追加トークンは最小限（タイトル10件 ≈ 500トークン程度）
+
+  #### 実装
+
+  **A. `runner/orchestrator.py` — `OrchestratorConfig`**
+  ```python
+  # 変更前:
+  news_limit: int = 5
+
+  # 変更後:
+  news_limit: int = 15            # 総取得件数
+  news_detail_limit: int = 5      # 本文付きで渡す件数
+  ```
+
+  **B. `runner/orchestrator.py` — ニュースフォーマット部分 (L516-523)**
+  ```python
+  if articles:
+      lines = []
+      for i, a in enumerate(articles[:self.config.news_limit]):
+          source_name = self.news_fetcher._extract_source_name(a.url) if hasattr(a, 'url') else a.source
+          date_str = a.published.strftime('%Y-%m-%d %H:%M') if a.published else "日時不明"
+
+          if i < self.config.news_detail_limit:
+              # 上位N件: タイトル + 本文
+              line = f"- [{date_str} | {source_name}] {a.title}"
+              if a.summary:
+                  line += f"\n  {a.summary[:500]}"
+          else:
+              # 残り: タイトルのみ
+              line = f"- [{date_str} | {source_name}] {a.title}"
+
+          lines.append(line)
+      news_context = "\n".join(lines)
+  ```
+
+  **C. `data_fetcher/news_fetcher.py` — `GoogleNewsFetcher.search()`**
+  - `limit` パラメータのデフォルトを `15` に変更
+  - 本文フェッチ (Scrapling) は上位5件のみに制限（速度とリソース節約）
+  - 6件目以降はDDG検索結果のタイトルだけ使い、本文フェッチをスキップ
+
+  ```python
+  # search() 内のフェッチループ:
+  for i, (title, url) in enumerate(raw_results[:limit]):
+      if self._should_skip(url):
+          articles.append(NewsArticle(title=title, url=url, source=url))
+          continue
+
+      body = ""
+      if scrapling_ok and i < 5:  # ★ 上位5件だけ本文フェッチ
+          try:
+              page = await _asyncio.get_event_loop().run_in_executor(...)
+              # ... 本文抽出 + published抽出
+          except Exception:
+              pass
+
+      articles.append(NewsArticle(
+          title=title, url=url, source=self._extract_source_name(url),
+          summary=body, published=published,
+      ))
+  ```
+
+  ---
+
+  ### 改善④ (A) 本文を500-800文字に拡大
+
+  #### 目的
+  ニュースの核心情報（データ、数値、引用、具体的事実）は通常500文字目以降にある。
+  300文字では導入部のみで分析に使えないことが多い。
+
+  #### 実装
+
+  **A. `data_fetcher/news_fetcher.py` — `GoogleNewsFetcher.search()`**
+  ```python
+  # 変更前:
+  body = " ".join(
+      p.text for p in paras
+      if p.text and len(p.text) > 60
+  )[:1000]
+
+  # 変更後:
+  body = " ".join(
+      p.text for p in paras
+      if p.text and len(p.text) > 60
+  )[:2000]  # フェッチ時は2000文字まで取得
+  ```
+
+  **B. `runner/orchestrator.py` — フォーマット部分**
+  ```python
+  # 変更前:
+  line += f"\n  {a.summary[:300]}"
+
+  # 変更後:
+  line += f"\n  {a.summary[:800]}"
+  ```
+
+  #### トークン影響
+  - 5件 × 800文字 ≈ 4000文字 ≈ 1500トークン
+  - 5件 × 300文字 ≈ 1500文字 ≈ 600トークン
+  - 増分: 約900トークン（LLM入力全体の5-10%程度、許容範囲）
+
+  ---
+
+  ### 改善⑤ (A) 質問カテゴリ別のソース選択・キーワード戦略
+
+  #### 目的
+  Polymarketは「BTC $100k到達」「Trump大統領」「SEC ETF承認」など全く異なるジャンルが混在。
+  一律DDG検索では政治系・規制系で的外れな記事を拾う。
+  質問カテゴリを判定し、カテゴリに応じたキーワード補強を行う。
+
+  #### 設計方針
+  - LLMを使ったカテゴリ分類は**しない**（コスト増・遅延）
+  - キーワードベースのルール判定で十分（高速・無料）
+  - カテゴリに応じて**検索キーワードに補助語を追加**する方式
+
+  #### カテゴリ定義
+  ```python
+  MARKET_CATEGORIES = {
+      "crypto_price": {
+          "keywords": ["bitcoin", "btc", "ethereum", "eth", "solana", "sol",
+                       "price", "reach", "above", "below", "$"],
+          "search_suffix": "price prediction analysis",
+          "priority_sources": ["coindesk.com", "theblock.co", "cointelegraph.com"],
+      },
+      "politics": {
+          "keywords": ["president", "election", "trump", "biden", "vote",
+                       "republican", "democrat", "senate", "congress", "governor"],
+          "search_suffix": "poll latest news",
+          "priority_sources": ["reuters.com", "apnews.com", "bbc.com"],
+      },
+      "regulation": {
+          "keywords": ["sec", "etf", "regulation", "approve", "ban", "law",
+                       "bill", "federal", "reserve", "fed", "fomc", "rate"],
+          "search_suffix": "regulation decision update",
+          "priority_sources": ["reuters.com", "bloomberg.com", "coindesk.com"],
+      },
+      "geopolitics": {
+          "keywords": ["war", "invasion", "ceasefire", "sanctions", "nato",
+                       "russia", "ukraine", "china", "taiwan", "iran", "israel"],
+          "search_suffix": "conflict update latest",
+          "priority_sources": ["reuters.com", "apnews.com", "bbc.com"],
+      },
+      "tech": {
+          "keywords": ["ai", "openai", "google", "apple", "microsoft", "launch",
+                       "release", "product", "spacex", "tesla"],
+          "search_suffix": "announcement latest news",
+          "priority_sources": ["techcrunch.com", "theverge.com", "reuters.com"],
+      },
+      "general": {
+          "keywords": [],
+          "search_suffix": "latest news",
+          "priority_sources": [],
+      },
+  }
+  ```
+
+  #### 実装
+
+  **A. `data_fetcher/news_fetcher.py` — カテゴリ判定メソッド追加**
+  ```python
+  def _detect_category(self, question: str) -> str:
+      """質問文からカテゴリを判定"""
+      q_lower = question.lower()
+      scores = {}
+      for cat, config in MARKET_CATEGORIES.items():
+          if cat == "general":
+              continue
+          score = sum(1 for kw in config["keywords"] if kw in q_lower)
+          if score > 0:
+              scores[cat] = score
+      if not scores:
+          return "general"
+      return max(scores, key=scores.get)
+  ```
+
+  **B. `data_fetcher/news_fetcher.py` — `_extract_keywords` にカテゴリ補強**
+  ```python
+  def _extract_keywords(self, question: str) -> str:
+      # ... 既存のキーワード抽出ロジック ...
+      base_keywords = " ".join(unique[:6])
+
+      # カテゴリに応じた検索補助語を追加
+      category = self._detect_category(question)
+      suffix = MARKET_CATEGORIES[category]["search_suffix"]
+
+      return f"{base_keywords} {suffix}"
+  ```
+
+  **C. `runner/orchestrator.py` — ソース優先度の表示（オプション）**
+  カテゴリの `priority_sources` に合致する記事を上位にソートする。
+  ```python
+  if articles:
+      category = self.news_fetcher._detect_category(question)
+      priority = MARKET_CATEGORIES.get(category, {}).get("priority_sources", [])
+
+      def sort_key(a):
+          domain = urlparse(a.url).netloc.replace("www.", "")
+          is_priority = 0 if domain in priority else 1
+          return (is_priority, 0 if a.published else 1)
+
+      articles.sort(key=sort_key)
+  ```
+
+  ---
+
+  ### 実装順序
+
+  ```
+  Step 1: 改善②ソース名 + 改善①日時 (S) — news_fetcher.py + orchestrator.py
+          → 最小限の変更で最大の情報品質向上
+  Step 2: 改善④本文拡大 (A) — news_fetcher.py + orchestrator.py
+          → 数値変更だけ、即完了
+  Step 3: 改善③記事数増加 (A) — config + orchestrator.py + news_fetcher.py
+          → フォーマットロジック変更
+  Step 4: 改善⑤カテゴリ別ソース (A) — news_fetcher.py 新規メソッド + orchestrator.py
+          → 最も工数が大きいが効果も大きい
+  ```
+
+  ### 完成後のLLMプロンプト例
+  ```
+  関連ニュース:
+
+  ■ 詳細 (上位5件):
+  - [2026-03-21 14:30 | CoinDesk] Bitcoin jumps past $95k as oil prices slip
+    Bitcoin surged 3.2% to $95,400 on Thursday after Brent crude fell below $70,
+    easing inflation concerns. Analysts at JPMorgan noted the inverse correlation
+    between energy costs and risk assets has strengthened since Q4 2025. The move
+    also followed dovish comments from Fed Governor Waller suggesting rate cuts
+    remain on the table for the June FOMC meeting...
+
+  - [2026-03-21 09:15 | The Block] Crypto market sheds $100B as Fed holds rates
+    The total crypto market cap dropped from $3.2T to $3.1T following the Federal
+    Reserve's decision to maintain rates at 4.25-4.50%. Chair Powell emphasized
+    persistent core inflation at 2.8% and signaled fewer cuts in 2026 than
+    previously expected. Bitcoin dropped 5% to $88,200 before recovering...
+
+  - [2026-03-20 22:00 | Reuters] Fed holds rates steady, signals cautious approach
+    The U.S. Federal Reserve kept its benchmark rate unchanged at 4.25%-4.50% as
+    expected, but the updated dot plot showed only one rate cut projected for 2026,
+    down from two in the December projection...
+
+  ■ ヘッドライン (6-15件目):
+  - [2026-03-21 11:00 | Bloomberg] Bitcoin Mining Difficulty Hits All-Time High
+  - [2026-03-21 08:45 | CNBC] Spot Bitcoin ETFs See $200M Outflows After Fed
+  - [2026-03-20 19:30 | Decrypt] Whale Alert: 5,000 BTC Moved to Coinbase
+  - [2026-03-20 16:00 | CoinTelegraph] On-Chain Data Shows Long-Term Holders Accumulating
+  - [2026-03-20 14:20 | Yahoo Finance] BlackRock CEO: Bitcoin Is 'Digital Gold'
+  - [2026-03-20 10:00 | AP News] US Treasury Announces New Crypto Reporting Rules
+  - [2026-03-19 23:00 | Forbes] MicroStrategy Buys Another $500M in Bitcoin
+  ```
+
 ---
 
 ## システム構成メモ (compact後参照用)

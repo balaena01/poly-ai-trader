@@ -113,7 +113,8 @@ class OrchestratorConfig:
     
     # ニュース
     fetch_news: bool = True
-    news_limit: int = 5
+    news_limit: int = 15            # 総取得件数
+    news_detail_limit: int = 5      # 本文付きで渡す件数
 
     # ダッシュボード
     dashboard: bool = False
@@ -512,13 +513,18 @@ class Orchestrator:
                 articles = await self.news_fetcher.search(
                     question,
                     limit=self.config.news_limit,
+                    detail_limit=self.config.news_detail_limit,
                 )
                 if articles:
                     lines = []
-                    for a in articles[:5]:
-                        line = f"- {a.title}"
-                        if a.summary:
-                            line += f"\n  {a.summary[:300]}"
+                    detail_n = self.config.news_detail_limit
+                    for i, a in enumerate(articles):
+                        # 日時 + ソース名ヘッダー (改善①②)
+                        date_str = a.published.strftime('%Y-%m-%d %H:%M') if a.published else "日時不明"
+                        line = f"- [{date_str} | {a.source}] {a.title}"
+                        # 上位N件のみ本文付き (改善③④)
+                        if i < detail_n and a.summary:
+                            line += f"\n  {a.summary[:800]}"
                         lines.append(line)
                     news_context = "\n".join(lines)
             

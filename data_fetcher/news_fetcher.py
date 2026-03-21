@@ -4,6 +4,7 @@ News Fetcher
 - Polymarket予測用の情報収集
 """
 import os
+import re
 import json
 import asyncio
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ except ImportError:
 
 # フォールバック用
 import httpx
+from urllib.parse import urlparse
 
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "news"
@@ -453,6 +455,165 @@ class NewsFetcher:
         print(f"💾 保存: {filepath}")
 
 
+# ── マーケットカテゴリ定義 (改善⑤) ────────────────────────────────────
+MARKET_CATEGORIES = {
+    "crypto_price": {
+        "keywords": ["bitcoin", "btc", "ethereum", "eth", "solana", "sol",
+                     "crypto", "token", "coin", "price", "reach", "above",
+                     "below", "$", "market cap"],
+        "search_suffix": "price prediction analysis",
+        "priority_domains": {"coindesk.com", "theblock.co", "cointelegraph.com",
+                             "decrypt.co"},
+    },
+    "politics": {
+        "keywords": ["president", "election", "trump", "biden", "vote",
+                     "republican", "democrat", "senate", "congress", "governor",
+                     "poll", "primary", "candidate"],
+        "search_suffix": "poll latest news",
+        "priority_domains": {"reuters.com", "apnews.com", "bbc.com",
+                             "politico.com"},
+    },
+    "regulation": {
+        "keywords": ["sec", "etf", "regulation", "approve", "ban", "law",
+                     "bill", "federal", "reserve", "fed", "fomc", "rate",
+                     "cftc", "compliance", "ruling"],
+        "search_suffix": "regulation decision update",
+        "priority_domains": {"reuters.com", "bloomberg.com", "coindesk.com"},
+    },
+    "geopolitics": {
+        "keywords": ["war", "invasion", "ceasefire", "sanctions", "nato",
+                     "russia", "ukraine", "china", "taiwan", "iran", "israel",
+                     "military", "troops", "missile"],
+        "search_suffix": "conflict update latest",
+        "priority_domains": {"reuters.com", "apnews.com", "bbc.com",
+                             "aljazeera.com"},
+    },
+    "tech": {
+        "keywords": ["ai", "openai", "google", "apple", "microsoft", "launch",
+                     "release", "product", "spacex", "tesla", "nvidia",
+                     "semiconductor"],
+        "search_suffix": "announcement latest news",
+        "priority_domains": {"techcrunch.com", "theverge.com", "reuters.com",
+                             "arstechnica.com"},
+    },
+    "general": {
+        "keywords": [],
+        "search_suffix": "latest news",
+        "priority_domains": set(),
+    },
+}
+
+# ── 既知ソースの表示名マッピング (改善②) ─────────────────────────────
+_KNOWN_SOURCES = {
+    "coindesk.com": "CoinDesk",
+    "cointelegraph.com": "CoinTelegraph",
+    "theblock.co": "The Block",
+    "decrypt.co": "Decrypt",
+    "reuters.com": "Reuters",
+    "bloomberg.com": "Bloomberg",
+    "cnbc.com": "CNBC",
+    "bbc.com": "BBC",
+    "bbc.co.uk": "BBC",
+    "nytimes.com": "NYT",
+    "washingtonpost.com": "WaPo",
+    "theguardian.com": "The Guardian",
+    "apnews.com": "AP News",
+    "forbes.com": "Forbes",
+    "finance.yahoo.com": "Yahoo Finance",
+    "yahoo.com": "Yahoo Finance",
+    "techcrunch.com": "TechCrunch",
+    "theverge.com": "The Verge",
+    "arstechnica.com": "Ars Technica",
+    "politico.com": "Politico",
+    "aljazeera.com": "Al Jazeera",
+}
+
+
+def extract_source_name(url: str) -> str:
+    """URLからソース表示名を抽出"""
+    try:
+        domain = urlparse(url).netloc
+        domain = re.sub(r'^www\.', '', domain)
+        return _KNOWN_SOURCES.get(domain, domain)
+    except Exception:
+        return url
+
+
+def detect_category(question: str) -> str:
+    """質問文からマーケットカテゴリを判定"""
+    q_lower = question.lower()
+    scores = {}
+    for cat, config in MARKET_CATEGORIES.items():
+        if cat == "general":
+            continue
+        score = 0
+        for kw in config["keywords"]:
+            # 記号を含むキーワード ($) はそのままマッチ
+            if not kw.isalpha():
+                if kw in q_lower:
+                    score += 1
+            else:
+                # 英単語は単語境界でマッチ ("ai" が "rain" にヒットしないように)
+                if re.search(r'\b' + re.escape(kw) + r'\b', q_lower):
+                    score += 1
+        if score > 0:
+            scores[cat] = score
+    if not scores:
+        return "general"
+    return max(scores, key=scores.get)
+
+
+def _extract_published(page) -> Optional[datetime]:
+    """Scraplingのページオブジェクトから公開日時を抽出"""
+    from dateutil.parser import parse as dateparse
+
+    # 1. <meta> タグ (最も信頼性が高い)
+    meta_selectors = [
+        'meta[property="article:published_time"]',
+        'meta[name="publish-date"]',
+        'meta[name="date"]',
+        'meta[property="og:article:published_time"]',
+        'meta[name="pubdate"]',
+        'meta[name="DC.date.issued"]',
+    ]
+    for sel in meta_selectors:
+        try:
+            el = page.css_first(sel)
+            if el:
+                content = el.attrib.get("content", "")
+                if content:
+                    return dateparse(content)
+        except Exception:
+            continue
+
+    # 2. <time datetime="..."> タグ
+    try:
+        time_el = page.css_first("time[datetime]")
+        if time_el:
+            dt_str = time_el.attrib.get("datetime", "")
+            if dt_str:
+                return dateparse(dt_str)
+    except Exception:
+        pass
+
+    # 3. JSON-LD (多くのニュースサイトが採用)
+    try:
+        for script in page.css('script[type="application/ld+json"]'):
+            text = script.text or ""
+            if "datePublished" in text:
+                data = json.loads(text)
+                # JSON-LD は配列の場合もある
+                items = data if isinstance(data, list) else [data]
+                for item in items:
+                    dp = item.get("datePublished")
+                    if dp:
+                        return dateparse(dp)
+    except Exception:
+        pass
+
+    return None
+
+
 # Google News RSS (Scrapling不要) - レガシー、後方互換のため残す
 class GoogleNewsFetcher:
     """
@@ -521,7 +682,12 @@ class GoogleNewsFetcher:
                 if len(unique) >= 5:
                     break
 
-        return " ".join(unique[:6])
+        base = " ".join(unique[:6])
+
+        # カテゴリに応じた検索補助語を追加 (改善⑤)
+        category = detect_category(question)
+        suffix = MARKET_CATEGORIES[category]["search_suffix"]
+        return f"{base} {suffix}"
 
     def _should_skip(self, url: str) -> bool:
         import re as _re
@@ -531,20 +697,27 @@ class GoogleNewsFetcher:
         domain = m.group(1)
         return any(skip in domain for skip in self._SKIP_DOMAINS)
 
-    async def search(self, question: str, limit: int = 10) -> List[NewsArticle]:
+    async def search(
+        self,
+        question: str,
+        limit: int = 15,
+        detail_limit: int = 5,
+    ) -> List[NewsArticle]:
         """
         DDG HTML検索でURLを取得し、Scraplingで本文をフェッチして返す。
 
         Args:
             question: マーケット質問文 (キーワード抽出に使用)
             limit: 最大返却件数
+            detail_limit: 本文フェッチする上位件数 (残りはタイトルのみ)
         """
         import re as _re
         import urllib.parse
         import asyncio as _asyncio
 
         keywords = self._extract_keywords(question)
-        print(f"   [news] keywords: {keywords}")
+        category = detect_category(question)
+        print(f"   [news] keywords: {keywords} (category: {category})")
 
         ddg_url = self._DDG_URL.format(query=urllib.parse.quote_plus(keywords))
 
@@ -587,7 +760,7 @@ class GoogleNewsFetcher:
         if not raw_results:
             return []
 
-        # ── Scrapling で各記事の本文フェッチ ─────────────────────────────
+        # ── Scrapling で上位 detail_limit 件の本文フェッチ ────────────────
         articles: List[NewsArticle] = []
         try:
             from scrapling.fetchers import Fetcher as _Fetcher
@@ -595,13 +768,19 @@ class GoogleNewsFetcher:
         except Exception:
             scrapling_ok = False
 
-        for title, url in raw_results[:limit]:
+        for i, (title, url) in enumerate(raw_results[:limit]):
+            source_name = extract_source_name(url)
+            published = None
+
             if self._should_skip(url):
-                articles.append(NewsArticle(title=title, url=url, source=url))
+                articles.append(NewsArticle(
+                    title=title, url=url, source=source_name,
+                ))
                 continue
 
             body = ""
-            if scrapling_ok:
+            # 上位 detail_limit 件だけ本文 + 日時をフェッチ (速度とリソース節約)
+            if scrapling_ok and i < detail_limit:
                 try:
                     page = await _asyncio.get_event_loop().run_in_executor(
                         None,
@@ -609,26 +788,44 @@ class GoogleNewsFetcher:
                             u, stealthy_headers=True, timeout=12
                         ),
                     )
+                    # 本文抽出 (改善④: 2000文字まで取得)
                     paras = page.css("p")
                     body = " ".join(
                         p.text for p in paras
                         if p.text and len(p.text) > 60
-                    )[:1000]
+                    )[:2000]
+                    # 公開日時抽出 (改善①)
+                    published = _extract_published(page)
                 except Exception:
                     pass  # フェッチ失敗 → タイトルのみ
 
             articles.append(NewsArticle(
                 title=title,
                 url=url,
-                source=url,
+                source=source_name,
                 summary=body,
+                published=published,
             ))
 
             if len(articles) >= limit:
                 break
 
+        # カテゴリの priority_domains に合致する記事を上位にソート (改善⑤)
+        priority = MARKET_CATEGORIES.get(category, {}).get("priority_domains", set())
+        if priority:
+            def _sort_key(a: NewsArticle):
+                try:
+                    domain = urlparse(a.url).netloc.replace("www.", "")
+                except Exception:
+                    domain = ""
+                is_priority = 0 if domain in priority else 1
+                has_date = 0 if a.published else 1
+                return (is_priority, has_date)
+            articles.sort(key=_sort_key)
+
         fetched = sum(1 for a in articles if a.summary)
-        print(f"   [news] {len(articles)} articles ({fetched} with body)")
+        dated = sum(1 for a in articles if a.published)
+        print(f"   [news] {len(articles)} articles ({fetched} with body, {dated} with date)")
         return articles
 
 
