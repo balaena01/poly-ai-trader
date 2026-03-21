@@ -1,6 +1,6 @@
 # Trading Logic — Poly AI Trader
 
-最終更新: 2026-03-20
+最終更新: 2026-03-21
 
 ---
 
@@ -15,9 +15,10 @@
 | YES価格範囲 | 15% ～ 85% |
 | 解決まで | 1時間 ～ 30日 |
 | スポーツ市場 | スキップ (Brier記録のみ) |
+| 相関ポジション | スキップ (LLM が is_correlated: true と判定した場合) |
 
 > YES価格が15%未満・85%超は「確信度が高すぎる市場」として除外。
-> 学習データとの一致を保つ目的もある。
+> 相関チェック: 保有中ポジション一覧を LLM に渡し、同一イベントの別条件・排他的結果を検出。
 
 ### 2. シグナル生成 (LLM + Ensemble)
 
@@ -30,7 +31,15 @@
 - エッジ = `final_probability - market_price`
 - プラスなら BUY_YES、マイナスなら BUY_NO
 
-### 3. ポジションサイジング (Quarter Kelly)
+### 3. LLM へのコンテキスト注入
+
+| コンテキスト | 内容 | 更新頻度 |
+|---|---|---|
+| 前回判断 | 同マーケットの前回 LLM 予測 (prob/conf/reasoning) | 毎回 |
+| パフォーマンス実績 | 過去30件の勝率・カテゴリ別精度・直近外れ5件 | 30分キャッシュ |
+| 保有ポジション一覧 | 相関チェック用 (新規エントリー時のみ) | 毎回 |
+
+### 4. ポジションサイジング (Quarter Kelly)
 
 | 状態 | Kelly 分率 |
 |---|---|
@@ -60,18 +69,43 @@
 
 ### 利確
 
-| 優先度 | 名前 | 条件 | 理由 |
-|---|---|---|---|
-| **3** | エッジ消失利確 | `current_edge < 5%` かつ `entry_edge` 記録済み | 市場が thesis を織り込んだ = 優位性なし。**14日制約なし** |
-| **4** | 価格ベース利確 | 含み益 ≥ **+40%** | セカンダリ (LLM再分析が遅い場合のバックアップ) |
+| 優先度 | 名前 | 条件 | 14日制約 | 理由 |
+|---|---|---|---|---|
+| **3** | エッジ消失利確 | `current_edge < 5%` かつ `entry_edge` 記録済み | **なし** | thesis 消滅 = 残り日数に関係なく撤退 |
+| **4** | 価格ベース利確 | 含み益 ≥ **+40%** | **あり** | セカンダリ (LLM再分析が遅い場合のバックアップ) |
 
-### 利確の追加制約
+### 追加制約
 
 | 制約 | 対象 | 内容 |
 |---|---|---|
 | 解決まで ≤ 14日 | 価格ベース利確のみ | スキップ → HOLD (GTC コスト > 残存期待値) |
-| 解決まで ≤ 14日 | エッジ消失利確 | **制約なし** (thesis消滅 = 残り日数に関係なく撤退) |
 | 残存価値 < $2 | すべて | GTC売り省略 → 直接クローズ (流動性枯渇ループ防止) |
+
+---
+
+## GTC 売り注文のライフサイクル
+
+```
+_exit_position() 呼び出し
+    │
+    ├─ 残存価値 < $2 → 直接クローズ (CLOB売りなし)
+    │
+    ▼
+execute_order() → GTC SELL 発注
+    │
+    ├─ order_id 取得成功 → mark_pending_sell()
+    └─ order_id なし     → mark_needs_manual_sale()
+
+_check_pending_gtc_orders() (毎サイクル)
+    │
+    ▼ get_order(pending_sell_order_id)
+    ├─ MATCHED/FILLED → close_position() ✅
+    ├─ CANCELLED      → cancel_pending_sell() (ACTIVE復帰)
+    ├─ LIVE (60分超)  → cancel_order() → ACTIVE復帰
+    └─ None (取得失敗) → get_token_balance() fallback
+                          残高 == 0 → FILLED として close_position() ✅
+                          残高 > 0  → スキップ (次サイクルで再確認)
+```
 
 ---
 
@@ -84,16 +118,16 @@
     │
     ▼
 LLM + Ensemble 分析
-    │  ├─ LLM (Claude Haiku): 確率・信頼度・スポーツ判定
+    │  ├─ LLM (Claude Haiku): 確率・信頼度・スポーツ判定・相関判定
     │  ├─ Orderflow: 板情報・約定履歴
     │  └─ Bayesian 統合: 各シグナルを重み付け合成
     │
     ├─ edge < ±5% or confidence < 50% → スキップ
+    ├─ スポーツ市場 (キーワード or LLM判定) → スキップ
+    ├─ 相関ポジション (LLM: is_correlated=true) → スキップ
     │
     ▼
-Audit チェック
-    │  ├─ スポーツ市場 → スキップ
-    │  └─ 異常検知 → confidence penalty
+Audit チェック → confidence penalty
     │
     ▼
 Quarter Kelly サイジング
@@ -107,13 +141,13 @@ GTC BUY 発注 → 約定待ち (order_filled=False)
 
 ━━━━━━━━ 保有中 (毎分チェック) ━━━━━━━━
 
-    ├─ [1] 確率崩壊?          → GTC SELL / 直接クローズ (<$2)
-    ├─ [2] 近解決 × 含み損?   → GTC SELL
-    ├─ [3] エッジ消失?         → GTC SELL (14日超のみ)
-    ├─ [4] 価格+40%?          → GTC SELL (14日超のみ)
-    ├─ [4] LLM逆転?           → GTC SELL
-    ├─ [5] 含み損-80%?        → GTC SELL
-    └─ マーケット解決          → 自動 PnL 確定
+    ├─ [1] 確率崩壊?             → 直接クローズ (<$2) / GTC SELL
+    ├─ [2] 近解決 × 含み損?      → GTC SELL
+    ├─ [3] エッジ消失? (14日制約なし) → GTC SELL
+    ├─ [4] 価格+40%? (14日超のみ) → GTC SELL
+    ├─ [4] LLM逆転?              → GTC SELL
+    ├─ [5] 含み損-80%?           → GTC SELL
+    └─ マーケット解決             → 自動 PnL 確定
 ```
 
 ---
@@ -130,8 +164,8 @@ max_position_pct: float = 0.10   # 1ポジション最大 10%
 
 # クローズ
 take_profit_pct: float = 0.40             # 価格ベース利確 +40%
-take_profit_min_days: int = 14            # 利確は残り14日超のみ
-edge_take_profit_threshold: float = 0.05  # エッジ消失利確 <5%
+take_profit_min_days: int = 14            # 価格ベース利確は残り14日超のみ
+edge_take_profit_threshold: float = 0.05  # エッジ消失利確 <5% (14日制約なし)
 stop_loss_pct: float = -0.80              # 価格ベース損切り -80%
 collapse_threshold: float = 0.88          # 確率崩壊閾値 88%
 stop_loss_near_expiry_days: int = 7       # 近解決損切り: 残りN日
@@ -143,6 +177,7 @@ stop_loss_near_expiry_pct: float = -0.40  # 近解決損切り: 含み損閾値 
 ## 設計思想
 
 - **エッジベース**: 「価格が動いたか」ではなく「自分の確率推定 vs 市場価格の乖離」が本質
-- **GTC 指値**: 相手がいないと約定しない。残存価値が低い場合は直接クローズ
+- **GTC 指値**: 相手がいないと約定しない。残存価値 < $2 は直接クローズ
 - **二値解決**: 市場は最終的に 0 か 1 に解決する。損切りは「thesis が崩壊したとき」であって「価格が動いたとき」ではない
-- **LLM自己学習**: 過去の勝敗実績・カテゴリ別精度・直近の外れパターンをフィードバック context として毎分析に注入
+- **LLM 自己学習**: 過去の勝敗実績・カテゴリ別精度・直近外れパターンをフィードバック context として毎分析に注入
+- **相関防止**: 保有ポジション一覧を LLM に渡し、同一イベントへの矛盾したポジションを排除

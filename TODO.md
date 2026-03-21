@@ -8,7 +8,11 @@
 
 | コミット | 内容 |
 |---|---|
-| (最新) | feat: ㉔ LLM相関ポジション検出実装 — is_correlated フラグ + 新規エントリースキップ |
+| (最新) | fix: pending_sell get_order失敗時にトークン残高で約定確認 (fallback) |
+| `prev` | fix: edge_take_profit を14日制約から除外 (reason分離: take_profit / edge_take_profit) |
+| `prev` | fix: 残存価値$2未満ポジションを直接クローズ (CLOB GTC売りループ防止) |
+| `prev` | feat: ㉔ LLM相関ポジション検出実装 — is_correlated フラグ + 新規エントリースキップ |
+| `prev` | feat: ㉓ LLMへのパフォーマンスフィードバック実装 (自己学習コンテキスト注入) |
 | `prev` | feat: ㉒ 利確再設計 — エッジ消失利確(entry_edge + _last_signals キャッシュ) |
 | `prev` | feat: ㉑ 損切りロジック再設計 — 確率崩壊ストップ(88%) + 近解決×含み損(-40%/7日) |
 | `prev` | fix: exit_signals ループの堅牢性改善 (needs_manual_sale スキップ + 各イテレーションのtry/except) |
