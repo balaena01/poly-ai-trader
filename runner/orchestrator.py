@@ -922,7 +922,8 @@ class Orchestrator:
     async def _check_pending_gtc_orders(self):
         """GTC未約定注文の状態確認・60分超でキャンセル"""
         pending = self.position_tracker.get_pending_positions()
-        if not pending:
+        pending_sell = self.position_tracker.get_pending_sell_positions()
+        if not pending and not pending_sell:
             return
 
         from client import PolyClient
