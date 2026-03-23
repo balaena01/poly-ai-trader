@@ -314,10 +314,12 @@ class EnsembleAnalyst:
                     accuracy=ml_accuracy,
                 ))
         
-        # ========== skill_score < 0 → LLMシグナルをブロック ==========
-        # 20件以上の実績でLLMが市場より劣ると統計的に確認された場合
-        if self._llm_skill_score is not None and self._llm_skill_score < 0:
-            print(f"   ⛔ LLMシグナルブロック (skill={self._llm_skill_score:+.3f} < 0, 実績20件超)")
+        # ========== skill_score < -0.05 → LLMシグナルをブロック ==========
+        # 20件以上の実績でLLMが市場より明確に劣ると確認された場合
+        # -0.05〜0 は市場とほぼ互角のためブロックしない (マージン5%)
+        _SKILL_BLOCK_THRESHOLD = -0.05
+        if self._llm_skill_score is not None and self._llm_skill_score < _SKILL_BLOCK_THRESHOLD:
+            print(f"   ⛔ LLMシグナルブロック (skill={self._llm_skill_score:+.3f} < {_SKILL_BLOCK_THRESHOLD}, 実績20件超)")
             _empty_bayesian = self.aggregator.aggregate(market_price=market.yes_price, signals=[])
             return EnsembleSignal(
                 market_id=market.market_id,

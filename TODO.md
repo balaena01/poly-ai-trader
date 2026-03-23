@@ -590,7 +590,9 @@ python main.py run --live
   - LLMシグナル生成後 → `brier_tracker.record_prediction()`
   - `_check_resolved_markets()` 解決後 → `brier_tracker.record_outcome()`
   - skill_score を Bayesian・RiskManager に渡す
-  - skill_score < 0 かつ サンプル数 >= 20 → LLMシグナルをブロック（HOLD返却）
+  - skill_score < **-0.05** かつ サンプル数 >= 20 → LLMシグナルをブロック（HOLD返却）
+    - 当初は `skill < 0` でブロックしていたが、-0.5% 程度のマイナスは市場とほぼ互角であり
+      ブロックは厳しすぎるため、5%マージンを設けた
 
   **⑤ ダッシュボード表示**
   - stats bar に `LLM Skill` を追加（例: `+0.12` なら緑、`-0.05` なら赤）
