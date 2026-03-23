@@ -127,9 +127,10 @@ class BrierTracker:
             brier_llm = sum((r["llm_prob"] - r["outcome"]) ** 2 for r in resolved) / len(resolved)
             brier_market = sum((r["market_price"] - r["outcome"]) ** 2 for r in resolved) / len(resolved)
             for r in resolved:
-                pred_yes = r["llm_prob"] >= 0.5
+                # edge方向で判定: LLMが市場より高い→BUY_YES、低い→BUY_NO (㉙)
+                bought_yes = r["llm_prob"] > r["market_price"]
                 actual_yes = r["outcome"] >= 0.5
-                if pred_yes == actual_yes:
+                if bought_yes == actual_yes:
                     wins += 1
                 else:
                     losses += 1
