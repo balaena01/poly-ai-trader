@@ -233,6 +233,16 @@ class PositionTracker:
             self.positions[pos_id].order_filled = True
             self._save()
 
+    def update_fill_data(self, pos_id: str, fill_price: float, fill_size: float):
+        """GTC約定後に実約定データで entry_price / size を更新 (㉚)"""
+        pos = self.positions.get(pos_id)
+        if not pos:
+            return
+        pos.entry_price = fill_price  # YES価格ベース
+        pos.size = fill_size          # USDC額
+        pos.order_filled = True
+        self._save()
+
     def mark_needs_manual_sale(self, pos_id: str):
         """手動売却が必要なポジションとしてマーク"""
         if pos_id in self.positions:

@@ -926,6 +926,31 @@ class Orchestrator:
         except Exception as e:
             print(f"   ❌ 発注エラー: {e}")
 
+    def _apply_fill_data(self, pos, order: dict):
+        """GTC約定時に実約定データで entry_price/size を更新 (㉚)"""
+        try:
+            price_raw = float(order.get("price", 0))
+            size_matched = float(order.get("size_matched", 0))
+            if price_raw > 0 and size_matched > 0:
+                fill_size = round(size_matched * price_raw, 4)  # USDC額
+                # BUY_NO: price はNOトークン価格 → YES価格に変換
+                if "NO" in pos.side.upper():
+                    fill_price_yes = round(1.0 - price_raw, 6)
+                else:
+                    fill_price_yes = round(price_raw, 6)
+                old_entry = pos.entry_price
+                old_size = pos.size
+                self.position_tracker.update_fill_data(pos.id, fill_price_yes, fill_size)
+                # RiskManager のエクスポージャーも実約定額で更新
+                if pos.market_id in self.risk_manager.open_positions:
+                    self.risk_manager.open_positions[pos.market_id]["amount"] = fill_size
+                print(f"   📊 約定データ反映: entry {old_entry:.4f}→{fill_price_yes:.4f}, size ${old_size:.2f}→${fill_size:.2f} (tokens={size_matched:.2f})")
+                return
+        except (ValueError, TypeError):
+            pass
+        # フォールバック: 約定データ取得失敗時はフラグのみ
+        self.position_tracker.mark_order_filled(pos.id)
+
     async def _check_pending_gtc_orders(self):
         """GTC未約定注文の状態確認・60分超でキャンセル"""
         pending = self.position_tracker.get_pending_positions()
@@ -966,7 +991,7 @@ class Orchestrator:
                 order = client.get_order(pos.order_id)
                 status = _order_status(order)
                 if status in ("MATCHED", "FILLED"):
-                    self.position_tracker.mark_order_filled(pos.id)
+                    self._apply_fill_data(pos, order)
                     print(f"   ✅ GTC約定確認 (active_ids): {pos.question[:40]}")
                 elif status is None:
                     pass  # 取得失敗: スキップして次ループで再確認
@@ -987,7 +1012,7 @@ class Orchestrator:
             order_status = _order_status(order)
 
             if order_status in ("MATCHED", "FILLED"):
-                self.position_tracker.mark_order_filled(pos.id)
+                self._apply_fill_data(pos, order)
                 print(f"   ✅ GTC約定確認: {pos.question[:40]}")
 
             elif order_status == "CANCELLED":
