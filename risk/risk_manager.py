@@ -1,6 +1,6 @@
 """
 Risk Manager
-- Quarter Kelly サイジング
+- Half Kelly サイジング
 - 連敗停止
 - ドローダウン制限
 - 相関キャップ
@@ -68,8 +68,8 @@ class RiskManager:
         initial_balance: float = 1000,
         
         # Kelly設定
-        kelly_fraction: float = 0.25,   # Quarter Kelly
-        max_position_pct: float = 0.10, # 最大10%
+        kelly_fraction: float = 0.50,   # Half Kelly
+        max_position_pct: float = 0.20, # 最大20%
         min_position: float = 1.0,      # 最小$1
         
         # 連敗設定
@@ -82,7 +82,7 @@ class RiskManager:
         max_correlated_exposure: float = 0.20,  # 相関資産の最大エクスポージャー
         
         # 総エクスポージャー設定
-        max_total_exposure: float = 0.50,  # 全ポジション合計の最大比率
+        max_total_exposure: float = 0.75,  # 全ポジション合計の最大比率
     ):
         """
         初期化
@@ -473,19 +473,19 @@ class RiskManager:
     def update_llm_skill(self, skill_score: Optional[float]):
         """
         LLM skill_score に応じて Kelly 分率を動的調整。
-        skill=None(未計測) → base × 0.5 (キャリブレーション期間中は半Kelly)
+        skill=None(未計測) → base × 1.0 (キャリブレーション中もフルKelly)
         skill>0.10  → 通常 (base)
-        skill 0~0.10 → base × 0.5
-        skill < 0   → base × 0.25（LLM有害期）
+        skill 0~0.10 → base × 0.75
+        skill < 0   → base × 0.50（LLM有害期・ブロック閾値-0.05より上の場合）
         """
         if skill_score is None:
-            new_fraction = self._base_kelly_fraction * 0.5  # 未計測 → 半Kelly
+            new_fraction = self._base_kelly_fraction  # 未計測 → フルKelly
         elif skill_score > 0.10:
             new_fraction = self._base_kelly_fraction
         elif skill_score >= 0.0:
-            new_fraction = self._base_kelly_fraction * 0.5
+            new_fraction = self._base_kelly_fraction * 0.75
         else:
-            new_fraction = self._base_kelly_fraction * 0.25
+            new_fraction = self._base_kelly_fraction * 0.50
         if abs(new_fraction - self.kelly_fraction) > 1e-6:
             label = "未計測" if skill_score is None else f"{skill_score:+.3f}"
             print(f"   📐 Kelly調整: {self.kelly_fraction:.3f} → {new_fraction:.3f} (skill={label})")
