@@ -155,6 +155,7 @@ class TradeExecutor:
         market_liquidity: float = None,
         market_end_date = None,
         symbol: str = "CRYPTO",
+        order_type: str = "GTC",
     ) -> ExecutionResult:
         """
         シグナルに基づいて注文を実行
@@ -267,12 +268,14 @@ class TradeExecutor:
                         token_id=signal.token_id,
                         amount=amount,
                         price=price,
+                        order_type=order_type,
                     )
                 else:
                     trade_result = self._client.sell(
                         token_id=signal.token_id,
                         amount=amount,
                         price=price,
+                        order_type=order_type,
                     )
                 
                 if trade_result.success:
@@ -320,6 +323,7 @@ class TradeExecutor:
         side: str,
         size: float,
         price: float,
+        order_type: str = "GTC",
     ) -> ExecutionResult:
         """
         シンプルな注文実行 (Orchestrator用)
@@ -399,7 +403,7 @@ class TradeExecutor:
             reasoning="Trigger execution",
         )
 
-        return await self.execute(signal, amount=size)
+        return await self.execute(signal, amount=size, order_type=order_type)
     
     async def execute_signals(
         self,

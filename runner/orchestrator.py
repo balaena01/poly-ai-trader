@@ -776,6 +776,37 @@ class Orchestrator:
             return
 
         # 実トークン残高補正は execute_order 内で接続後に実施
+        # ── Step1: FOK で即時売却を試みる ────────────────────────────────────
+        try:
+            fok_result = await self.executor.execute_order(
+                market_id=pos.market_id,
+                token_id=pos.token_id,
+                side=exit_side,
+                size=pos.size,
+                price=sell_price,
+                order_type="FOK",
+            )
+        except Exception as e:
+            print(f"   ⚠️ FOK注文例外: {e} → GTCにフォールバック")
+            fok_result = None
+
+        if fok_result and fok_result.success:
+            # FOK即時約定 → 直接クローズ (PENDING_SELL不要)
+            print(f"   ⚡ FOK即時約定: {pos.question[:40]}")
+            self._direct_close_position(pos, current_price, reason)
+            return
+
+        # FOK失敗の理由を確認
+        fok_msg = (fok_result.message or "") if fok_result else ""
+        if "スキップ" in fok_msg or "not enough" in fok_msg.lower():
+            # 残高なし → GTC でもムダ
+            self.position_tracker.mark_needs_manual_sale(pos.id)
+            print(f"   ⚠️ 手動売却フラグをセット: {pos.question[:40]}")
+            return
+
+        print(f"   🔄 FOK不成立 → GTCにフォールバック: {fok_msg[:50] or '流動性不足'}")
+
+        # ── Step2: GTC でポスト (既存フロー) ──────────────────────────────────
         try:
             result = await self.executor.execute_order(
                 market_id=pos.market_id,
@@ -783,18 +814,16 @@ class Orchestrator:
                 side=exit_side,
                 size=pos.size,
                 price=sell_price,
+                order_type="GTC",
             )
             if result.success:
-                # GTC売り注文発注成功 → PENDING_SELL 状態に移行
-                # 約定確認は _check_pending_gtc_orders で行い、確認後に close_position()
                 sell_order_id = result.order_id or ""
                 if not sell_order_id:
-                    # order_id が取れなかった場合は追跡不可 → 手動フラグ
                     self.position_tracker.mark_needs_manual_sale(pos.id)
                     print(f"   ⚠️ order_id 未取得のため手動売却フラグをセット: {pos.question[:40]}")
                 else:
                     self.position_tracker.mark_pending_sell(pos.id, sell_order_id, current_price)
-                    print(f"   ⏳ 売り注文発注済み (約定確認待ち): {pos.question[:40]}")
+                    print(f"   ⏳ GTC売り注文発注済み (約定確認待ち): {pos.question[:40]}")
             else:
                 msg = result.message or ""
                 if "スキップ" in msg or "not enough" in msg.lower():
