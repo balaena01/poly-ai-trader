@@ -367,18 +367,11 @@ class TradeExecutor:
                 pass
         # ─────────────────────────────────────────────────────────────────
 
-        # ── Step2: SELL系残高補正 (CLOB確定価格を使って全残高を売る) ──────
-        # final_token_price でトークン数→USDC換算し math.floor で切り捨て
-        # → _place_order で size = amount / final_token_price が実残高を超えない
+        # ── Step2: SELL系 → 成行 FOK → FAK → GTC指値 の順で試みる ───────────
         if is_sell and self._connected and self._client:
             try:
                 actual_tokens = self._client.get_token_balance(token_id)
-                if actual_tokens is not None and actual_tokens > 0:
-                    corrected_size = math.floor(actual_tokens * final_token_price * 100) / 100
-                    if abs(corrected_size - size) > 0.10:
-                        print(f"   ℹ️ sell size 補正: ${size:.2f} → ${corrected_size:.2f} (実残高 {actual_tokens:.4f} tokens × {final_token_price:.4f})")
-                    size = corrected_size
-                elif actual_tokens == 0:
+                if actual_tokens is None or actual_tokens == 0:
                     print(f"   ⚠️ トークン残高ゼロ (token_id={token_id[:16]}…)")
                     return ExecutionResult(
                         success=False,
@@ -386,11 +379,43 @@ class TradeExecutor:
                                       market_price=price, predicted_prob=price, edge=0, confidence=0, reasoning=""),
                         message="スキップ: トークン残高ゼロ",
                     )
+
+                token_amount = math.floor(actual_tokens * 10000) / 10000  # 4桁切り捨て
+
+                _dummy_signal = Signal(
+                    market_id=market_id, token_id=token_id, question=f"Market {market_id[:16]}",
+                    action=Action[side.upper()] if side.upper() in Action.__members__ else Action.SELL_YES,
+                    market_price=price, predicted_prob=price, edge=0.1, confidence=0.8,
+                    reasoning="Market order exit",
+                )
+
+                # FOK: 全量即時約定 or キャンセル
+                fok = self._client.sell_market(token_id, token_amount, order_type="FOK")
+                if fok.success:
+                    print(f"   ⚡ FOK成行即時約定: {token_amount:.4f} tokens")
+                    return ExecutionResult(success=True, signal=_dummy_signal, order_id=fok.order_id,
+                                           executed_price=final_token_price, executed_amount=size, message="FOK成行")
+
+                # FAK: 部分約定可 (残りはキャンセル)
+                print(f"   🔄 FOK不成立 → FAKにフォールバック: {fok.message[:60]}")
+                fak = self._client.sell_market(token_id, token_amount, order_type="FAK")
+                if fak.success:
+                    print(f"   ✅ FAK成行約定: {token_amount:.4f} tokens")
+                    return ExecutionResult(success=True, signal=_dummy_signal, order_id=fak.order_id,
+                                           executed_price=final_token_price, executed_amount=size, message="FAK成行")
+
+                # GTC指値フォールバック
+                print(f"   🔄 FAK不成立 → GTC指値にフォールバック: {fak.message[:60]}")
+                corrected_size = math.floor(actual_tokens * final_token_price * 100) / 100
+                if abs(corrected_size - size) > 0.10:
+                    print(f"   ℹ️ sell size 補正: ${size:.2f} → ${corrected_size:.2f} (実残高 {actual_tokens:.4f} tokens × {final_token_price:.4f})")
+                size = corrected_size
+
             except Exception as _e:
-                print(f"   ⚠️ トークン残高取得失敗 (fallback size={size:.2f}): {_e}")
+                print(f"   ⚠️ 成行売り失敗 → GTC指値フォールバック: {_e}")
         # ─────────────────────────────────────────────────────────────────
 
-        # Signal オブジェクト作成
+        # BUY系 または GTC指値フォールバック
         signal = Signal(
             market_id=market_id,
             token_id=token_id,
@@ -403,7 +428,7 @@ class TradeExecutor:
             reasoning="Trigger execution",
         )
 
-        return await self.execute(signal, amount=size, order_type=order_type)
+        return await self.execute(signal, amount=size, order_type="GTC")
     
     async def execute_signals(
         self,

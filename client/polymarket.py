@@ -447,6 +447,22 @@ class PolyClient:
         """
         return self._place_order(token_id, SELL, amount, price, order_type)
     
+    def sell_market(
+        self,
+        token_id: str,
+        token_amount: float,
+        order_type: str = "FOK",
+    ) -> TradeResult:
+        """
+        成行売り (トークン数指定)
+
+        Args:
+            token_id: トークンID
+            token_amount: 売却トークン数
+            order_type: FOK=全量即時 or キャンセル / FAK=部分約定可
+        """
+        return self._place_order(token_id, SELL, token_amount, price=None, order_type=order_type)
+
     def _place_order(
         self,
         token_id: str,
@@ -463,15 +479,14 @@ class PolyClient:
             ot = getattr(OrderType, order_type, OrderType.GTC)
             
             if price is None:
-                # 成行注文
+                # 成行注文 (order_type: FOK=全量即時 or キャンセル, FAK=部分約定可)
                 order = MarketOrderArgs(
                     token_id=token_id,
                     amount=amount,
                     side=side,
-                    order_type=OrderType.FOK,
                 )
                 signed = self._client.create_market_order(order)
-                resp = self._client.post_order(signed, OrderType.FOK)
+                resp = self._client.post_order(signed, ot)
             else:
                 # 指値注文
                 # amount を size に変換 (shares = amount / price)
