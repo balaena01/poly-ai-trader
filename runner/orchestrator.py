@@ -576,15 +576,6 @@ class Orchestrator:
                 open_positions_context=open_positions_context,
             )
 
-            # LLM予測をBrierTrackerに記録（最初の1回のみ保存）
-            if signal and signal.llm_prob != 0.5:
-                self.brier_tracker.record_prediction(
-                    market_id=getattr(market, "market_id", ""),
-                    llm_prob=signal.llm_prob,
-                    market_price=getattr(market, "yes_price", 0.5),
-                    yes_token_id=getattr(market, "yes_token_id", ""),
-                )
-
             if not signal:
                 print(f"   ⚪ シグナルなし")
                 return
@@ -622,7 +613,7 @@ class Orchestrator:
                 print(f"   🚫 ブロック: {flags_str}")
                 return
 
-            # スポーツ系マーケットはトレード対象外 (Brier記録のみ)
+            # スポーツ系マーケットはトレード対象外
             # キーワード判定 OR LLM判定のどちらかがスポーツと判断したらスキップ
             _kw_sport = is_sports_market(question)
             _llm_sport = getattr(signal, 'llm_is_sport', None) is True
@@ -630,7 +621,7 @@ class Orchestrator:
                 reason = []
                 if _kw_sport:  reason.append("キーワード")
                 if _llm_sport: reason.append("LLM判定")
-                print(f"   🏟️ スポーツ市場のためトレードスキップ ({'+'.join(reason)}, Brier記録のみ)")
+                print(f"   🏟️ スポーツ市場のためトレードスキップ ({'+'.join(reason)})")
                 return
 
             # 相関ポジション検出 → 新規エントリーのみスキップ (reversal/pendingは通過)
@@ -661,7 +652,16 @@ class Orchestrator:
                     else:
                         print(f"   ⏸️ PENDING維持: {pending_pos.side}")
                 return
-            
+
+            # LLM予測をBrierTrackerに記録（全フィルター通過後・実取引シグナルのみ）
+            if signal.llm_prob != 0.5:
+                self.brier_tracker.record_prediction(
+                    market_id=getattr(market, "market_id", ""),
+                    llm_prob=signal.llm_prob,
+                    market_price=getattr(market, "yes_price", 0.5),
+                    yes_token_id=getattr(market, "yes_token_id", ""),
+                )
+
             # ========== LLM逆転クローズチェック (FILLED ポジション) ==========
             if _check_reversal_exit:
                 filled_pos = next(
