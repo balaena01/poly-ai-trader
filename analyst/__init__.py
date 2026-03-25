@@ -1,4 +1,4 @@
-from .llm_analyst import LLMAnalyst, Signal, Action, list_models
+from .llm_analyst import LLMAnalyst, Signal, Action, PositionReview, list_models
 from .features import Features, FeatureExtractor
 from .ml_analyst import MLAnalyst, MLPrediction
 from .crypto_features import CryptoFeatures, CryptoFeatureExtractor, is_crypto_market
@@ -12,6 +12,7 @@ __all__ = [
     "LLMAnalyst",
     "Signal",
     "Action",
+    "PositionReview",
     "list_models",
     # Features
     "Features",

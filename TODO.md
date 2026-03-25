@@ -626,6 +626,74 @@ python main.py run --live
 
 ## 今後やりたいこと (バックログ)
 
+- [ ] **㉜ LLMによるポジション定期レビュー（出口判断の脱ルールベース化）**
+
+  ### 概要
+  現在の出口ロジックはすべてルールベース（edge消失・価格+40%・損切り-80%等）。
+  ポジション保有中にLLMが「今クローズすべきか？」を能動的に評価する仕組みを追加する。
+
+  ### 動作イメージ
+  ```
+  _positions_loop()（毎分）
+    ↓
+  _llm_position_review() を追加呼び出し
+    ↓
+  FILLED かつ pending_sell なし のポジションを列挙
+    ↓ ポジションごとに last_review から5分以上経過していれば
+  LLM に問う:
+    - question / side / entry_price / current_price / PnL% / days_left
+    - 直近ニュース (GoogleNewsFetcher、最大3件ヘッドライン)
+    - 価格推移 (直近7日、_price_history_cache から)
+    - エントリー時のthesis (_load_llm_judgment から)
+  LLM出力: should_exit: bool / reason: str
+    ↓ should_exit == true
+  _exit_position(pos, "llm_review", current_price)
+  ```
+
+  ### LLMへの質問フォーマット
+  ```
+  あなたは保有ポジションの出口判断を行うトレーダーです。
+  以下の情報をもとに、**今すぐクローズすべきか**を判断してください。
+
+  [ポジション]
+  問い: {question}
+  方向: {side} (エントリー価格: {entry_price:.1%})
+  現在: {current_price:.1%} (PnL: {pnl_pct:+.1%}, 残り{days_left:.0f}日)
+
+  [エントリー時の根拠]
+  {entry_thesis}
+
+  [直近ニュース]
+  {news_headlines}
+
+  [価格推移 (直近7日)]
+  {price_chart}
+
+  JSON形式で回答:
+  {"should_exit": true/false, "reason": "理由を1文で"}
+  ```
+
+  ### クールダウン管理
+  - `_llm_review_cooldowns: Dict[str, datetime]` をオーケストレーターに追加
+  - ポジションIDをキーに最終レビュー日時を保存
+  - 5分未満のものはスキップ
+
+  ### 実装箇所
+  - `analyst/llm_analyst.py`: `review_position()` メソッド追加
+    - 入力: question, side, entry_price, current_price, pnl_pct, days_left, entry_thesis, news, price_chart
+    - 出力: `PositionReview(should_exit: bool, reason: str)`
+  - `runner/orchestrator.py`:
+    - `_llm_review_cooldowns: Dict[str, datetime]` 追加
+    - `_llm_position_review()` メソッド追加
+    - `_positions_loop()` 内で `await self._llm_position_review()` 呼び出し
+    - OrchestratorConfig に `llm_review_interval_min: int = 5` 追加
+
+  ### 注意点
+  - ドライランでも LLM は呼ぶが `_exit_position()` は実行しない（ログのみ）
+  - ポジション数が多い場合は並列呼び出し (asyncio.gather)
+  - ニュース取得失敗時はニュースなしで続行（クラッシュしない）
+  - エントリー時thesis が `_load_llm_judgment` で取れない場合は空文字
+
 - [x] **MLを一時無効化してLLMのみで運用** — 対応済み (`2e8d41c`)
 
   ### 判断理由

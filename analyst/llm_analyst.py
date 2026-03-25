@@ -22,6 +22,13 @@ class Action(Enum):
 
 
 @dataclass
+class PositionReview:
+    """ポジションレビュー結果"""
+    should_exit: bool
+    reason: str
+
+
+@dataclass
 class Signal:
     """売買シグナル"""
     action: Action
@@ -236,6 +243,57 @@ JSONのみで回答してください。
         except Exception as e:
             print(f"LLM分析エラー: {e}")
             return None
+
+    async def review_position(
+        self,
+        question: str,
+        side: str,
+        entry_price: float,
+        current_price: float,
+        pnl_pct: float,
+        days_left: float,
+        entry_thesis: str = "",
+        news: str = "",
+        price_chart: str = "",
+    ) -> PositionReview:
+        """
+        保有ポジションの出口判断をLLMに問う。
+
+        Returns:
+            PositionReview(should_exit, reason)
+        """
+        news_section = f"\n[直近ニュース]\n{news}" if news else ""
+        chart_section = f"\n[価格推移 (直近7日)]\n{price_chart}" if price_chart else ""
+        thesis_section = f"\n[エントリー時の根拠]\n{entry_thesis}" if entry_thesis else ""
+
+        prompt = f"""あなたは保有ポジションの出口判断を行うトレーダーです。
+以下の情報をもとに、**今すぐクローズすべきか**を判断してください。
+
+[ポジション]
+問い: {question}
+方向: {side} (エントリー価格: {entry_price:.1%})
+現在: {current_price:.1%} (PnL: {pnl_pct:+.1%}, 残り{days_left:.0f}日){thesis_section}{news_section}{chart_section}
+
+## 判断基準
+- エントリー時のthesisが崩れていればクローズ
+- 新情報がthesisを支持していれば継続
+- 残り日数が少なく損失が拡大中ならクローズ
+- 利益が出ており更なる伸びが見込めるなら継続
+
+JSON形式のみで回答:
+{{"should_exit": true/false, "reason": "理由を1文で"}}
+"""
+        try:
+            raw = await self._call_cli(prompt)
+            data = self._parse_llm_json(raw)
+            if data and "should_exit" in data:
+                return PositionReview(
+                    should_exit=bool(data["should_exit"]),
+                    reason=data.get("reason", ""),
+                )
+        except Exception as e:
+            print(f"LLMポジションレビューエラー: {e}")
+        return PositionReview(should_exit=False, reason="レビュー失敗")
 
     async def generate_signals(
         self,

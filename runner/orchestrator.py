@@ -117,6 +117,10 @@ class OrchestratorConfig:
     news_limit: int = 15            # 総取得件数
     news_detail_limit: int = 5      # 本文付きで渡す件数
 
+    # LLMポジションレビュー
+    llm_position_review: bool = True       # ポジション定期レビューを有効化
+    llm_review_interval_min: int = 5       # レビュー間隔 (分)
+
     # ダッシュボード
     dashboard: bool = False
     dashboard_port: int = 8080
@@ -202,6 +206,9 @@ class Orchestrator:
         # パフォーマンスフィードバック context キャッシュ (30分ごとに再生成)
         self._perf_context_cache: str = ""
         self._perf_context_updated_at: Optional[datetime] = None
+
+        # LLMポジションレビュー クールダウン管理 (pos_id → 最終レビュー日時)
+        self._llm_review_cooldowns: Dict[str, datetime] = {}
 
         # 構造化ログ (data/trade_log.jsonl)
         _log_dir = Path(__file__).parent.parent / "data"
@@ -1272,15 +1279,11 @@ class Orchestrator:
         except Exception:
             pass
     
-    async def _check_position_exits(self, markets: List):
-        """利確・損切りをチェック (常時有効、条件で制御)"""
+    def _get_current_prices_and_end_dates(self, markets: List):
+        """現在価格 / end_date を market_id → value で収集して返す (CLOB補完あり)"""
         open_positions = self.position_tracker.get_open_positions()
-        if not open_positions:
-            return
-
-        # 現在価格 / end_date を market_id → value で収集
-        current_prices = {}
-        end_dates = {}
+        current_prices: Dict[str, float] = {}
+        end_dates: Dict = {}
         for market in markets:
             market_id = getattr(market, 'market_id', None) or getattr(market, 'condition_id', None)
             yes_price = getattr(market, 'yes_price', None)
@@ -1290,8 +1293,6 @@ class Orchestrator:
                     current_prices[market_id] = yes_price
                 if end_date:
                     end_dates[market_id] = end_date
-
-        # _last_markets にないポジションは CLOB midpoint で価格を補完
         missing = [p for p in open_positions if p.order_filled and p.market_id not in current_prices]
         if missing:
             try:
@@ -1306,6 +1307,15 @@ class Orchestrator:
                             current_prices[pos.market_id] = mid
             except Exception:
                 pass
+        return current_prices, end_dates
+
+    async def _check_position_exits(self, markets: List):
+        """利確・損切りをチェック (常時有効、条件で制御)"""
+        open_positions = self.position_tracker.get_open_positions()
+        if not open_positions:
+            return
+
+        current_prices, end_dates = self._get_current_prices_and_end_dates(markets)
 
         # 利確・損切り候補を取得
         exit_signals = self.position_tracker.check_exit_conditions(
@@ -1367,6 +1377,88 @@ class Orchestrator:
             except Exception as e:
                 print(f"   ❌ _exit_position エラー (継続): {e}")
     
+    async def _llm_position_review(self, current_prices: Dict[str, float], end_dates: Dict):
+        """
+        FILLED ポジションを LLM で定期レビューし、出口判断を行う。
+        ポジションごとに llm_review_interval_min 分のクールダウンを設ける。
+        """
+        if not self.config.llm_position_review:
+            return
+
+        positions = self.position_tracker.get_open_positions()
+        review_targets = [
+            p for p in positions
+            if p.order_filled and not p.pending_sell_order_id and not p.needs_manual_sale
+        ]
+        if not review_targets:
+            return
+
+        now = datetime.now(timezone.utc)
+        interval_sec = self.config.llm_review_interval_min * 60
+
+        async def _review_one(pos):
+            # クールダウンチェック
+            last = self._llm_review_cooldowns.get(pos.id)
+            if last is not None:
+                elapsed = (now - last).total_seconds()
+                if elapsed < interval_sec:
+                    return
+            self._llm_review_cooldowns[pos.id] = now
+
+            yes_price = current_prices.get(pos.market_id, pos.entry_price)
+            pnl_pct = pos.get_unrealized_pnl_pct(yes_price)
+            end_date = end_dates.get(pos.market_id)
+            days_left = ((end_date - now).total_seconds() / 86400) if end_date else 99.0
+
+            # エントリー時thesis
+            token_id = pos.yes_token_id or pos.token_id or ""
+            judgment = self._load_llm_judgment(token_id) if token_id else None
+            entry_thesis = judgment.get("reasoning", "") if judgment else ""
+
+            # 直近ニュース (最大3件ヘッドライン、失敗しても続行)
+            news_headlines = ""
+            try:
+                articles = await self.news_fetcher.search(pos.question, limit=3, detail_limit=0)
+                if articles:
+                    news_headlines = "\n".join(
+                        f"- {a.get('title', '')}" for a in articles[:3]
+                    )
+            except Exception:
+                pass
+
+            # 価格推移 (直近7日・_last_markets から取れない場合はスキップ)
+            price_chart = ""
+            try:
+                prices = await self.price_fetcher.get_daily_prices(token_id, days=7)
+                if prices:
+                    price_chart = ", ".join(f"{p:.2f}" for p in prices)
+            except Exception:
+                pass
+
+            print(f"   🔍 LLMレビュー: {pos.question[:40]} (PnL={pnl_pct:+.1%})")
+            review = await self.analyst.llm_analyst.review_position(
+                question=pos.question,
+                side=pos.side,
+                entry_price=pos.entry_price,
+                current_price=yes_price,
+                pnl_pct=pnl_pct,
+                days_left=days_left,
+                entry_thesis=entry_thesis,
+                news=news_headlines,
+                price_chart=price_chart,
+            )
+
+            icon = "🚪" if review.should_exit else "⏸️"
+            print(f"   {icon} LLMレビュー結果: {'EXIT' if review.should_exit else 'HOLD'} — {review.reason}")
+
+            if review.should_exit:
+                if self.config.mode == RunMode.LIVE:
+                    await self._exit_position(pos, "llm_review", yes_price)
+                else:
+                    print(f"   🔧 ドライラン: llm_review EXIT はスキップ")
+
+        await asyncio.gather(*[_review_one(p) for p in review_targets])
+
     def _build_open_positions_context(self) -> str:
         """保有中ポジション一覧を LLM の相関チェック用 context 文字列として生成"""
         positions = self.position_tracker.get_open_positions()
@@ -1807,6 +1899,11 @@ class Orchestrator:
 
                 # 利確・損切りチェック
                 await self._check_position_exits(self._last_markets)
+
+                # LLMポジションレビュー (5分ごと・クールダウンで制御)
+                if self.config.llm_position_review:
+                    _prices, _end_dates = self._get_current_prices_and_end_dates(self._last_markets)
+                    await self._llm_position_review(_prices, _end_dates)
 
                 # ダッシュボード更新
                 if self.dashboard:
